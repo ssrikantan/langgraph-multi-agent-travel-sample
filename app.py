@@ -583,11 +583,81 @@ builder.add_conditional_edges(
     ["book_excursion_safe_tools", "book_excursion_sensitive_tools", "leave_skill", END],
 )
 
+def handle_multiple_tool_calls(state: State) -> dict:
+    """Handle multiple tool calls by responding to all of them and routing appropriately."""
+    tool_calls = state["messages"][-1].tool_calls
+    messages = []
+    next_route = None
+    
+    # Process each tool call and create appropriate responses
+    for tool_call in tool_calls:
+        if tool_call["name"] == ToFlightBookingAssistant.__name__:
+            messages.append(
+                ToolMessage(
+                    content="The assistant is now the Flight Updates & Booking Assistant. Reflect on the above conversation between the host assistant and the user."
+                    " The user's intent is unsatisfied. Use the provided tools to assist the user. Remember, you are Flight Updates & Booking Assistant,"
+                    " and the booking, update, other other action is not complete until after you have successfully invoked the appropriate tool."
+                    " If the user changes their mind or needs help for other tasks, call the CompleteOrEscalate function to let the primary host assistant take control."
+                    " Do not mention who you are - just act as the proxy for the assistant.",
+                    tool_call_id=tool_call["id"],
+                )
+            )
+            if next_route is None:  # Set the first specialized assistant as the route
+                next_route = "update_flight"
+        elif tool_call["name"] == ToBookCarRental.__name__:
+            messages.append(
+                ToolMessage(
+                    content="The assistant is now the Car Rental Assistant. Reflect on the above conversation between the host assistant and the user."
+                    " The user's intent is unsatisfied. Use the provided tools to assist the user. Remember, you are Car Rental Assistant,"
+                    " and the booking, update, other other action is not complete until after you have successfully invoked the appropriate tool."
+                    " If the user changes their mind or needs help for other tasks, call the CompleteOrEscalate function to let the primary host assistant take control."
+                    " Do not mention who you are - just act as the proxy for the assistant.",
+                    tool_call_id=tool_call["id"],
+                )
+            )
+            if next_route is None:
+                next_route = "book_car_rental"
+        elif tool_call["name"] == ToHotelBookingAssistant.__name__:
+            messages.append(
+                ToolMessage(
+                    content="The assistant is now the Hotel Booking Assistant. Reflect on the above conversation between the host assistant and the user."
+                    " The user's intent is unsatisfied. Use the provided tools to assist the user. Remember, you are Hotel Booking Assistant,"
+                    " and the booking, update, other other action is not complete until after you have successfully invoked the appropriate tool."
+                    " If the user changes their mind or needs help for other tasks, call the CompleteOrEscalate function to let the primary host assistant take control."
+                    " Do not mention who you are - just act as the proxy for the assistant.",
+                    tool_call_id=tool_call["id"],
+                )
+            )
+            if next_route is None:
+                next_route = "book_hotel"
+        elif tool_call["name"] == ToBookExcursion.__name__:
+            messages.append(
+                ToolMessage(
+                    content="The assistant is now the Trip Recommendation Assistant. Reflect on the above conversation between the host assistant and the user."
+                    " The user's intent is unsatisfied. Use the provided tools to assist the user. Remember, you are Trip Recommendation Assistant,"
+                    " and the booking, update, other other action is not complete until after you have successfully invoked the appropriate tool."
+                    " If the user changes their mind or needs help for other tasks, call the CompleteOrEscalate function to let the primary host assistant take control."
+                    " Do not mention who you are - just act as the proxy for the assistant.",
+                    tool_call_id=tool_call["id"],
+                )
+            )
+            if next_route is None:
+                next_route = "book_excursion"
+    
+    return {
+        "messages": messages,
+        "dialog_state": next_route,
+    }
+
+
 # Primary assistant
 builder.add_node("primary_assistant", Assistant(assistant_runnable))
 builder.add_node(
     "primary_assistant_tools", create_tool_node_with_fallback(primary_assistant_tools)
 )
+builder.add_node("handle_multiple_tool_calls", handle_multiple_tool_calls)
+
+
 
 
 def route_primary_assistant(
@@ -598,14 +668,11 @@ def route_primary_assistant(
         return END
     tool_calls = state["messages"][-1].tool_calls
     if tool_calls:
-        if tool_calls[0]["name"] == ToFlightBookingAssistant.__name__:
-            return "enter_update_flight"
-        elif tool_calls[0]["name"] == ToBookCarRental.__name__:
-            return "enter_book_car_rental"
-        elif tool_calls[0]["name"] == ToHotelBookingAssistant.__name__:
-            return "enter_book_hotel"
-        elif tool_calls[0]["name"] == ToBookExcursion.__name__:
-            return "enter_book_excursion"
+        # Check if any tool calls are for specialized assistants
+        specialized_tools = [ToFlightBookingAssistant.__name__, ToBookCarRental.__name__, 
+                           ToHotelBookingAssistant.__name__, ToBookExcursion.__name__]
+        if any(tc["name"] in specialized_tools for tc in tool_calls):
+            return "handle_multiple_tool_calls"
         return "primary_assistant_tools"
     raise ValueError("Invalid route")
 
@@ -616,15 +683,31 @@ builder.add_conditional_edges(
     "primary_assistant",
     route_primary_assistant,
     [
-        "enter_update_flight",
-        "enter_book_car_rental",
-        "enter_book_hotel",
-        "enter_book_excursion",
+        "handle_multiple_tool_calls",
         "primary_assistant_tools",
         END,
     ],
 )
 builder.add_edge("primary_assistant_tools", "primary_assistant")
+
+# Route from handle_multiple_tool_calls to appropriate workflow
+def route_from_multiple_tool_calls(state: State):
+    dialog_state = state.get("dialog_state")
+    if not dialog_state:
+        return "primary_assistant"
+    return dialog_state[-1]
+
+builder.add_conditional_edges(
+    "handle_multiple_tool_calls",
+    route_from_multiple_tool_calls,
+    [
+        "update_flight",
+        "book_car_rental", 
+        "book_hotel",
+        "book_excursion",
+        "primary_assistant",
+    ],
+)
 
 
 # Each delegated workflow can directly respond to the user
