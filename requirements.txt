@@ -1,0 +1,11 @@
+langgraph==0.2.74
+langsmith
+langchain-openai
+langchain-community
+langchain-experimental
+tavily-python 
+pandas 
+openai
+requests
+azure-identity
+IPython
