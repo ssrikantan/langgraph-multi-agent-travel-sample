@@ -757,16 +757,23 @@ def route_to_workflow(
 builder.add_conditional_edges("fetch_user_info", route_to_workflow)
 
 # Compile graph
+AUTO_APPROVE_SENSITIVE = os.getenv("AUTO_APPROVE_SENSITIVE", "true").lower() in {
+    "1",
+    "true",
+    "yes",
+    "y",
+}
+interrupt_nodes = [] if AUTO_APPROVE_SENSITIVE else [
+    "update_flight_sensitive_tools",
+    "book_car_rental_sensitive_tools",
+    "book_hotel_sensitive_tools",
+    "book_excursion_sensitive_tools",
+]
+
 memory = InMemorySaver()
 part_4_graph = builder.compile(
     checkpointer=memory,
-    # Let the user approve or deny the use of sensitive tools
-    interrupt_before=[
-        "update_flight_sensitive_tools",
-        "book_car_rental_sensitive_tools",
-        "book_hotel_sensitive_tools",
-        "book_excursion_sensitive_tools",
-    ],
+    interrupt_before=interrupt_nodes,
 )
 
 # from IPython.display import Image, display
