@@ -1,9 +1,10 @@
+import os
 from utilities import create_tool_node_with_fallback, _print_event
-from car_rental_tools import search_car_rentals, book_car_rental, update_car_rental, cancel_car_rental
-from excursions import search_trip_recommendations, book_excursion, update_excursion, cancel_excursion
-from flight_tools import search_flights, update_ticket_to_new_flight, cancel_ticket, fetch_user_flight_information
-from hotels_tools import book_hotel, update_hotel, cancel_hotel, search_hotels
-from tools import lookup_policy
+from tools.car_rental_tools import search_car_rentals, book_car_rental, update_car_rental, cancel_car_rental
+from tools.excursions import search_trip_recommendations, book_excursion, update_excursion, cancel_excursion
+from tools.flight_tools import search_flights, update_ticket_to_new_flight, cancel_ticket, fetch_user_flight_information
+from tools.hotels_tools import book_hotel, update_hotel, cancel_hotel, search_hotels
+from tools.policies import lookup_policy
 from typing import Annotated, Literal, Optional
 from typing_extensions import TypedDict
 from langgraph.graph.message import AnyMessage, add_messages
@@ -11,20 +12,30 @@ import datetime
 from openai import AzureOpenAI
 from langchain_openai import AzureChatOpenAI
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
-from dbcreate import db, update_dates
+from data import db, update_dates
 
 token_provider = get_bearer_token_provider(
     DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default"
 )
 
+AZURE_OPENAI_ENDPOINT = os.getenv(
+    "AZURE_OPENAI_ENDPOINT", "https://aoai-gpt4-001.openai.azure.com"
+)
+AZURE_OPENAI_DEPLOYMENT = os.getenv(
+    "AZURE_AI_FOUNDRY_MODEL_DEPLOYMENT_NAME", "gpt-4o"
+)
+AZURE_OPENAI_API_VERSION = os.getenv(
+    "AZURE_OPENAI_API_VERSION", "2025-01-01-preview"
+)
+
 
 # client = OpenAI(api_key="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")
 llm = AzureChatOpenAI(
-    azure_endpoint="https://aoai-gpt4-001.openai.azure.com",
-    azure_deployment="gpt-4o",
+    azure_endpoint=AZURE_OPENAI_ENDPOINT,
+    azure_deployment=AZURE_OPENAI_DEPLOYMENT,
     azure_ad_token_provider=token_provider,
     openai_api_type="azure",
-    api_version="2025-01-01-preview",
+    api_version=AZURE_OPENAI_API_VERSION,
 )
 
 def update_dialog_stack(left: list[str], right: Optional[str]) -> list[str]:
@@ -53,7 +64,7 @@ class State(TypedDict):
     ]
     
 from langchain_openai import AzureOpenAI
-from langchain_community.tools.tavily_search import TavilySearchResults
+from langchain_tavily import TavilySearchResults
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable, RunnableConfig
 
@@ -746,83 +757,10 @@ part_4_graph = builder.compile(
 # from IPython.display import Image, display
 
 # try:
-#     display(Image(part_4_graph.get_graph(xray=True).draw_mermaid_png()))
+#     # display(Image(part_4_graph.get_graph(xray=True).draw_mermaid_png()))
+#     graph_image = part_4_graph.get_graph(xray=True).draw_mermaid_png()
+#     with open("graph_bot_app.png", "wb") as f:
+#         f.write(graph_image)
 # except Exception:
 #     # This requires some extra dependencies and is optional
 #     pass
-
-
-import shutil
-import uuid
-
-# Update with the backup file so we can restart from the original place in each section
-db = update_dates(db)
-thread_id = str(uuid.uuid4())
-
-config = {
-    "configurable": {
-        # The passenger_id is used in our flight tools to
-        # fetch the user's flight information
-        "passenger_id": "3442 587242",
-        # Checkpoints are accessed by thread_id
-        "thread_id": thread_id,
-    }
-}
-
-_printed = set()
-tutorial_questions = [
-    "Hi there, what time is my flight?",
-    "Am i allowed to update my flight to something sooner? I want to leave later today.",
-    "Update my flight to sometime next week then",
-    "The next available option is great",
-    "what about lodging and transportation?",
-    "Yeah i think i'd like an affordable hotel for my week-long stay (7 days). And I'll want to rent a car.",
-    "OK could you place a reservation for your recommended hotel? It sounds nice.",
-    "yes go ahead and book anything that's moderate expense and has availability.",
-    "Now for a car, what are my options?",
-    "Awesome let's just get the cheapest option. Go ahead and book for 7 days",
-    "Cool so now what recommendations do you have on excursions?",
-    "Are they available while I'm there?",
-    "interesting - i like the museums, what options are there? ",
-    "OK great pick one and book it for my second day there.",
-]
-# We can reuse the tutorial questions from part 1 to see how it does.
-for question in tutorial_questions:
-    events = part_4_graph.stream(
-        {"messages": ("user", question)}, config, stream_mode="values"
-    )
-    for event in events:
-        _print_event(event, _printed)
-    snapshot = part_4_graph.get_state(config)
-    while snapshot.next:
-        # We have an interrupt! The agent is trying to use a tool, and the user can approve or deny it
-        # Note: This code is all outside of your graph. Typically, you would stream the output to a UI.
-        # Then, you would have the frontend trigger a new run via an API call when the user has provided input.
-        try:
-            user_input = input(
-                "Do you approve of the above actions? Type 'y' to continue;"
-                " otherwise, explain your requested changed.\n\n"
-            )
-        except:
-            user_input = "y"
-        if user_input.strip() == "y":
-            # Just continue
-            result = part_4_graph.invoke(
-                None,
-                config,
-            )
-        else:
-            # Satisfy the tool invocation by
-            # providing instructions on the requested changes / change of mind
-            result = part_4_graph.invoke(
-                {
-                    "messages": [
-                        ToolMessage(
-                            tool_call_id=event["messages"][-1].tool_calls[0]["id"],
-                            content=f"API call denied by user. Reasoning: '{user_input}'. Continue assisting, accounting for the user's input.",
-                        )
-                    ]
-                },
-                config,
-            )
-        snapshot = part_4_graph.get_state(config)

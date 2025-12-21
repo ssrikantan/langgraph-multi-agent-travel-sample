@@ -1,4 +1,4 @@
-from dbcreate import db
+from travel_agent.data import db
 from langchain.tools.base import tool
 import sqlite3
 from datetime import date, datetime
@@ -6,8 +6,6 @@ from typing import Optional, Union
 
 import pytz
 from langchain_core.runnables import RunnableConfig
-from langchain.tools.base import tool
-from dbcreate import db
 
 @tool
 def search_hotels(

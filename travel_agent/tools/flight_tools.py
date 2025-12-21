@@ -5,7 +5,7 @@ from typing import Optional
 import pytz
 from langchain_core.runnables import RunnableConfig
 from langchain.tools.base import tool
-from dbcreate import db
+from travel_agent.data import db
 
 
 @tool

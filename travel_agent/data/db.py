@@ -1,14 +1,16 @@
 import os
 import shutil
 import sqlite3
+from pathlib import Path
 
 import pandas as pd
 import requests
 
+base_dir = Path(__file__).resolve().parents[2]
 db_url = "https://storage.googleapis.com/benchmarks-artifacts/travel-db/travel2.sqlite"
-local_file = "travel2.sqlite"
+local_file = base_dir / "travel2.sqlite"
 # The backup lets us restart for each tutorial section
-backup_file = "travel2.backup.sqlite"
+backup_file = base_dir / "travel2.backup.sqlite"
 overwrite = False
 if overwrite or not os.path.exists(local_file):
     response = requests.get(db_url)

@@ -2,7 +2,7 @@ from datetime import date, datetime
 from typing import Optional, Union
 from langchain.tools.base import tool
 import sqlite3
-from dbcreate import db
+from travel_agent.data import db
 
 @tool
 def search_car_rentals(
