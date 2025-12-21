@@ -14,3 +14,4 @@ azure-identity
 IPython
 azure-ai-agentserver-agentframework
 azure-ai-agentserver-langgraph==1.0.0b7
+azure-monitor-opentelemetry==1.8.1

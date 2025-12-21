@@ -7,6 +7,10 @@ from __future__ import annotations
 import uuid
 from typing import Optional
 
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
+
 from travel_agent import app
 from travel_agent.stream_demo import run_stream_demo
 
