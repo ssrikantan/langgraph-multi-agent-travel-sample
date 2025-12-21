@@ -1,10 +1,11 @@
+import os
 import sqlite3
 from datetime import date, datetime
 from typing import Optional
 
 import pytz
 from langchain_core.runnables import RunnableConfig
-from langchain.tools.base import tool
+from langchain_core.tools import tool
 from travel_agent.data import db
 
 
@@ -17,9 +18,10 @@ def fetch_user_flight_information(config: RunnableConfig) -> list[dict]:
         associated flight details, and the seat assignments for each ticket belonging to the user.
     """
     configuration = config.get("configurable", {})
-    passenger_id = configuration.get("passenger_id", None)
+    passenger_id = configuration.get("passenger_id") or os.getenv("DEFAULT_PASSENGER_ID")
     if not passenger_id:
-        raise ValueError("No passenger ID configured.")
+        # In hosted/anonymous mode, just return an empty list instead of erroring
+        return []
 
     conn = sqlite3.connect(db)
     cursor = conn.cursor()

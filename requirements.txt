@@ -1,4 +1,6 @@
-langgraph==0.2.74
+langgraph==1.0.5
+langgraph-prebuilt==1.0.5
+python-dotenv
 langsmith
 langchain-openai
 langchain-community
@@ -11,3 +13,4 @@ requests
 azure-identity
 IPython
 azure-ai-agentserver-agentframework
+azure-ai-agentserver-langgraph==1.0.0b7

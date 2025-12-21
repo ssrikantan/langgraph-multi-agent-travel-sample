@@ -1,10 +1,10 @@
 import os
-from utilities import create_tool_node_with_fallback, _print_event
-from tools.car_rental_tools import search_car_rentals, book_car_rental, update_car_rental, cancel_car_rental
-from tools.excursions import search_trip_recommendations, book_excursion, update_excursion, cancel_excursion
-from tools.flight_tools import search_flights, update_ticket_to_new_flight, cancel_ticket, fetch_user_flight_information
-from tools.hotels_tools import book_hotel, update_hotel, cancel_hotel, search_hotels
-from tools.policies import lookup_policy
+from .utilities import create_tool_node_with_fallback, _print_event
+from .tools.car_rental_tools import search_car_rentals, book_car_rental, update_car_rental, cancel_car_rental
+from .tools.excursions import search_trip_recommendations, book_excursion, update_excursion, cancel_excursion
+from .tools.flight_tools import search_flights, update_ticket_to_new_flight, cancel_ticket, fetch_user_flight_information
+from .tools.hotels_tools import book_hotel, update_hotel, cancel_hotel, search_hotels
+from .tools.policies import lookup_policy
 from typing import Annotated, Literal, Optional
 from typing_extensions import TypedDict
 from langgraph.graph.message import AnyMessage, add_messages
@@ -12,21 +12,23 @@ import datetime
 from openai import AzureOpenAI
 from langchain_openai import AzureChatOpenAI
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
-from data import db, update_dates
+from .data import db, update_dates
+
+
+def _require_env(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        raise RuntimeError(f"Missing required environment variable: {name}")
+    return value
+
 
 token_provider = get_bearer_token_provider(
     DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default"
 )
 
-AZURE_OPENAI_ENDPOINT = os.getenv(
-    "AZURE_OPENAI_ENDPOINT", "https://aoai-gpt4-001.openai.azure.com"
-)
-AZURE_OPENAI_DEPLOYMENT = os.getenv(
-    "AZURE_AI_FOUNDRY_MODEL_DEPLOYMENT_NAME", "gpt-4o"
-)
-AZURE_OPENAI_API_VERSION = os.getenv(
-    "AZURE_OPENAI_API_VERSION", "2025-01-01-preview"
-)
+AZURE_OPENAI_ENDPOINT = _require_env("AZURE_OPENAI_ENDPOINT")
+AZURE_OPENAI_DEPLOYMENT = _require_env("AZURE_AI_FOUNDRY_MODEL_DEPLOYMENT_NAME")
+AZURE_OPENAI_API_VERSION = _require_env("AZURE_OPENAI_API_VERSION")
 
 
 # client = OpenAI(api_key="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")
@@ -64,7 +66,7 @@ class State(TypedDict):
     ]
     
 from langchain_openai import AzureOpenAI
-from langchain_tavily import TavilySearchResults
+from langchain_tavily import TavilySearch
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable, RunnableConfig
 
@@ -343,7 +345,7 @@ primary_assistant_prompt = ChatPromptTemplate.from_messages(
     ]
 ).partial(time=datetime.datetime.now)
 primary_assistant_tools = [
-    TavilySearchResults(max_results=1),
+    TavilySearch(max_results=1),
     search_flights,
     lookup_policy,
 ]
@@ -392,8 +394,21 @@ from langgraph.prebuilt import tools_condition
 builder = StateGraph(State)
 
 
-def user_info(state: State):
-    return {"user_info": fetch_user_flight_information.invoke({})}
+def user_info(state: State, config=None):
+    """Fetch user flight info using passenger_id from configurable request context.
+
+    If no passenger_id is provided, fall back to DEFAULT_PASSENGER_ID env; otherwise
+    return an empty list to keep the graph running.
+    """
+    cfg = (config or {}).get("configurable", {}) if config else {}
+    passenger_id = cfg.get("passenger_id") or os.getenv("DEFAULT_PASSENGER_ID")
+    if not passenger_id:
+        return {"user_info": []}
+    return {
+        "user_info": fetch_user_flight_information.invoke(
+            {}, config={"configurable": {"passenger_id": passenger_id}}
+        )
+    }
 
 
 builder.add_node("fetch_user_info", user_info)

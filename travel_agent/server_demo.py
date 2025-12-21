@@ -1,17 +1,20 @@
 """CLI starter for the LangGraph demo."""
 
-from typing import Iterable, Optional
+import os
 import uuid
+from typing import Iterable, Optional
+
 from . import app
 
 
-def create_app_context(passenger_id: str = "3442 587242", thread_id: Optional[str] = None):
+def create_app_context(passenger_id: Optional[str] = None, thread_id: Optional[str] = None):
     """Prepare runtime config for the agent graph without mutating the core app module."""
     app.db = app.update_dates(app.db)
+    resolved_passenger_id = passenger_id or os.getenv("DEFAULT_PASSENGER_ID", "3442 587242")
     resolved_thread_id = thread_id or str(uuid.uuid4())
     config = {
         "configurable": {
-            "passenger_id": passenger_id,
+            "passenger_id": resolved_passenger_id,
             "thread_id": resolved_thread_id,
         }
     }

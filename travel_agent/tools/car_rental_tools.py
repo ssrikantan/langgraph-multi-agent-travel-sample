@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from typing import Optional, Union
-from langchain.tools.base import tool
+from langchain_core.tools import tool
 import sqlite3
 from travel_agent.data import db
 
