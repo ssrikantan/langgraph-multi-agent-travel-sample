@@ -1,4 +1,19 @@
-"""CLI starter for the LangGraph demo."""
+"""Local-only CLI harness for the LangGraph demo.
+
+Purpose
+-------
+- Runs the travel agent graph entirely in-process for quick local testing and tutorials.
+- Shows how to wire `configurable` values (passenger_id, thread_id) and stream events from the graph.
+
+When to use
+-----------
+- Use locally to iterate on the graph logic without the Azure-hosted adapter.
+- Good reference for building your own CLI or service wrapper.
+
+When not to use
+---------------
+- Not used by the Foundry Hosted Agent runtime; the hosted path is through container.py/workflow_core.py.
+"""
 
 import os
 import uuid

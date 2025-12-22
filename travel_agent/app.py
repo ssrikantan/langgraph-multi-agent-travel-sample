@@ -13,6 +13,7 @@ from openai import AzureOpenAI
 from langchain_openai import AzureChatOpenAI
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from .data import db, update_dates
+from pydantic import BaseModel
 
 
 def _require_env(name: str) -> str:
@@ -47,6 +48,15 @@ def update_dialog_stack(left: list[str], right: Optional[str]) -> list[str]:
     if right == "pop":
         return left[:-1]
     return left + [right]
+
+
+class ConfigSchema(BaseModel):
+    """Configuration schema for the travel agent.
+    
+    This defines the configurable parameters that can be passed to the agent
+    per-request or per-thread from the hosting platform (e.g., Foundry UI).
+    """
+    passenger_id: Optional[str] = None
 
 
 class State(TypedDict):
@@ -391,7 +401,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import tools_condition
 
-builder = StateGraph(State)
+builder = StateGraph(State, config_schema=ConfigSchema)
 
 
 def user_info(state: State, config=None):
@@ -401,7 +411,10 @@ def user_info(state: State, config=None):
     return an empty list to keep the graph running.
     """
     cfg = (config or {}).get("configurable", {}) if config else {}
-    passenger_id = cfg.get("passenger_id") or os.getenv("DEFAULT_PASSENGER_ID")
+    passenger_id = cfg.get("passenger_id")
+    # Handle empty string by treating it as None
+    if not passenger_id:
+        passenger_id = os.getenv("DEFAULT_PASSENGER_ID")
     if not passenger_id:
         return {"user_info": []}
     return {

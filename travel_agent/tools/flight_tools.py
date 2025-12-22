@@ -18,7 +18,10 @@ def fetch_user_flight_information(config: RunnableConfig) -> list[dict]:
         associated flight details, and the seat assignments for each ticket belonging to the user.
     """
     configuration = config.get("configurable", {})
-    passenger_id = configuration.get("passenger_id") or os.getenv("DEFAULT_PASSENGER_ID")
+    passenger_id = configuration.get("passenger_id")
+    # Handle empty string by treating it as None and falling back to env variable
+    if not passenger_id:
+        passenger_id = os.getenv("DEFAULT_PASSENGER_ID")
     if not passenger_id:
         # In hosted/anonymous mode, just return an empty list instead of erroring
         return []
@@ -99,7 +102,9 @@ def update_ticket_to_new_flight(
 ) -> str:
     """Update the user's ticket to a new valid flight."""
     configuration = config.get("configurable", {})
-    passenger_id = configuration.get("passenger_id") or os.getenv("DEFAULT_PASSENGER_ID")
+    passenger_id = configuration.get("passenger_id")
+    if not passenger_id:
+        passenger_id = os.getenv("DEFAULT_PASSENGER_ID")
     if not passenger_id:
         raise ValueError("No passenger ID configured.")
 
@@ -166,7 +171,9 @@ def update_ticket_to_new_flight(
 def cancel_ticket(ticket_no: str, *, config: RunnableConfig) -> str:
     """Cancel the user's ticket and remove it from the database."""
     configuration = config.get("configurable", {})
-    passenger_id = configuration.get("passenger_id") or os.getenv("DEFAULT_PASSENGER_ID")
+    passenger_id = configuration.get("passenger_id")
+    if not passenger_id:
+        passenger_id = os.getenv("DEFAULT_PASSENGER_ID")
     if not passenger_id:
         raise ValueError("No passenger ID configured.")
     conn = sqlite3.connect(db)

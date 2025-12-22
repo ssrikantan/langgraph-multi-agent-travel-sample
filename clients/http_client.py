@@ -1,4 +1,9 @@
 """Simple client to exercise the hosted travel agent via HTTP.
+You can host the agent locally in the playground in VS Code, after running container.py.
+Refer to https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/vs-code-agents-workflow-pro-code?view=foundry&tabs=windows-powershell&pivots=python
+for the steps.
+
+Use this Client to ensure it works, before deploying to a hosted environment.
 
 Usage:
     python -m clients.http_client "hello there, what time is my flight?"

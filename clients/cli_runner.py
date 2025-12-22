@@ -1,4 +1,5 @@
 """Client-side demo that consumes the streaming helper and prints events.
+It is meant to test the LangGraph app locally without needing to run a server.
 Run: python -m clients.cli_runner
 """
 

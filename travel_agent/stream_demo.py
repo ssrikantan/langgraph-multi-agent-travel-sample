@@ -1,8 +1,18 @@
-"""Lightweight streaming helper: yields LangGraph events so callers can forward to clients.
+"""Local-only streaming helper for the LangGraph demo.
 
-Intended usage:
-- Call run_stream_demo with an on_event callback that sends events to your client transport
-    (SSE/WebSocket/etc.). This module does not print by default.
+Purpose
+-------
+- Wraps server_demo utilities to emit graph events via callbacks (e.g., SSE/WebSocket) without printing.
+- Demonstrates how to auto-approve or intercept tool calls when running the graph in-process.
+
+When to use
+-----------
+- Use during local development to prototype a streaming transport or to observe graph events.
+- Keep as a reference for how to forward events to a client layer.
+
+When not to use
+---------------
+- Not part of the Azure/Foundry Hosted Agent deployment path; hosted runs use container.py/workflow_core.py.
 """
 
 from __future__ import annotations
