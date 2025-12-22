@@ -1,4 +1,4 @@
-"""Container entrypoint to host the LangGraph agent in Azure AI Foundry."""
+"""Container entrypoint to host the LangGraph agent in Microsoft AI Foundry."""
 
 import asyncio
 
