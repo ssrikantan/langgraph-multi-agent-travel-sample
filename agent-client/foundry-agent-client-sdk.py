@@ -17,10 +17,11 @@ USE_STREAMING = True  # Set to False for non-streaming behavior
 # Foundry endpoint components
 FOUNDRY_RESOURCE_NAME = "sansri-foundry-hosted-agents-pro"
 PROJECT_NAME = "sansri-foundry-hosted-agents-project"
-APP_NAME = "travel-multi-agent"  # Published Agent Application name
+AGENT_NAME = "travel-multi-agent"  # Agent name to reference
 
-# Use the published Agent Applications endpoint
-BASE_URL = f"https://{FOUNDRY_RESOURCE_NAME}.services.ai.azure.com/api/projects/{PROJECT_NAME}/applications/{APP_NAME}/protocols/openai"
+# Use the PROJECT endpoint (not application endpoint) - this is what works
+# The agent is specified in the request payload, not the URL
+BASE_URL = f"https://{FOUNDRY_RESOURCE_NAME}.services.ai.azure.com/api/projects/{PROJECT_NAME}/openai"
 
 # Create Azure AD token provider for authentication
 token_provider = get_bearer_token_provider(
@@ -55,20 +56,16 @@ def build_conversation_input(history: list, new_message: str) -> list:
     
     Published applications are stateless - we must send the full
     conversation history with each request.
-    
-    Uses the correct format with 'type': 'message' as per Azure docs.
     """
     messages = []
     
     for msg in history:
         messages.append({
-            "type": "message",
             "role": msg["role"],
             "content": msg["content"]
         })
     
     messages.append({
-        "type": "message",
         "role": "user",
         "content": new_message
     })
@@ -85,10 +82,14 @@ def send_message_streaming(conversation_history: list, user_message: str) -> str
     # Refresh token before request
     refresh_token()
     
-    # Create streaming response - NO model parameter needed for published apps
+    # Create streaming response with agent reference
+    # Use extra_body to pass the agent reference since SDK doesn't have native support
     stream = client.responses.create(
         stream=True,
         input=input_messages,
+        extra_body={
+            "agent": {"name": AGENT_NAME, "type": "agent_reference"}
+        }
     )
     
     response_text = ""
@@ -140,9 +141,13 @@ def send_message_non_streaming(conversation_history: list, user_message: str) ->
     # Refresh token before request
     refresh_token()
     
-    # Create response - NO model parameter needed for published apps
+    # Create response with agent reference
+    # Use extra_body to pass the agent reference since SDK doesn't have native support
     response = client.responses.create(
         input=input_messages,
+        extra_body={
+            "agent": {"name": AGENT_NAME, "type": "agent_reference"}
+        }
     )
     
     # Get the response text
@@ -171,7 +176,7 @@ def interactive_chat():
     print("=" * 60)
     print("Travel Support Agent - Interactive Chat (OpenAI SDK)")
     print("=" * 60)
-    print(f"App: {APP_NAME}")
+    print(f"Agent: {AGENT_NAME}")
     print(f"Streaming: {'Enabled' if USE_STREAMING else 'Disabled'}")
     print(f"Mode: Stateless (client maintains history)")
     print("\nType 'quit' or 'exit' to end the conversation.")
@@ -235,7 +240,7 @@ def interactive_chat():
 
 def single_turn_demo():
     """Run a single-turn demo."""
-    print(f"App: {APP_NAME}")
+    print(f"Agent: {AGENT_NAME}")
     print(f"Streaming: {'Enabled' if USE_STREAMING else 'Disabled'}")
     
     # Create client
