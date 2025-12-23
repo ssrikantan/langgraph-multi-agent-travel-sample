@@ -17,6 +17,7 @@ from azure.ai.agentserver.langgraph import from_langgraph
 from azure.identity.aio import DefaultAzureCredential, ManagedIdentityCredential
 from langgraph.graph import StateGraph, START, END, MessagesState
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -33,8 +34,12 @@ def get_credential():
     return ManagedIdentityCredential() if os.getenv("MSI_ENDPOINT") else DefaultAzureCredential()
 
 
-def invoke_travel_agent(state: MessagesState) -> MessagesState:
-    """Wrapper node that invokes the travel agent graph and returns MessagesState."""
+def invoke_travel_agent(state: MessagesState, config: RunnableConfig) -> MessagesState:
+    """Wrapper node that invokes the travel agent graph and returns MessagesState.
+    
+    The config parameter is passed automatically by LangGraph and contains
+    the thread_id from Foundry's conversation_id for state persistence.
+    """
     logger.info(f"invoke_travel_agent: input messages count={len(state.get('messages', []))}")
     
     # Convert MessagesState to travel agent's State format
@@ -50,16 +55,23 @@ def invoke_travel_agent(state: MessagesState) -> MessagesState:
         # Note: Don't include dialog_state - let the graph initialize it properly
     }
     
-    # Create a config with thread_id for the checkpointer
-    import uuid
-    thread_id = str(uuid.uuid4())
-    config = {"configurable": {"thread_id": thread_id}}
-    logger.info(f"invoke_travel_agent: Using thread_id={thread_id}")
+    # Use the thread_id from the config passed by the adapter
+    # This ensures conversation state is preserved across turns
+    thread_id = config.get("configurable", {}).get("thread_id")
+    if not thread_id:
+        import uuid
+        thread_id = str(uuid.uuid4())
+        logger.warning(f"invoke_travel_agent: No thread_id in config, using generated: {thread_id}")
+    else:
+        logger.info(f"invoke_travel_agent: Using thread_id from Foundry: {thread_id}")
+    
+    # Create config for the inner graph with the same thread_id
+    inner_config = {"configurable": {"thread_id": thread_id}}
     
     try:
         # Use invoke to get the final state
-        logger.info(f"invoke_travel_agent: Calling part_4_graph.invoke")
-        result = part_4_graph.invoke(travel_state, config=config)
+        logger.info(f"invoke_travel_agent: Calling part_4_graph.invoke with thread_id={thread_id}")
+        result = part_4_graph.invoke(travel_state, config=inner_config)
         logger.info(f"invoke_travel_agent: part_4_graph returned, result keys: {result.keys() if result else 'None'}")
         
         # Extract messages from the result
