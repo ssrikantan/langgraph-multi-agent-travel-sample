@@ -62,6 +62,7 @@ class ConfigSchema(BaseModel):
 class State(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
     user_info: str
+    passenger_id: Optional[str]  # Stored passenger ID for the conversation
     dialog_state: Annotated[
         list[
             Literal[
@@ -88,8 +89,10 @@ class Assistant:
         self.runnable = runnable
 
     def __call__(self, state: State, config: RunnableConfig):
+        print(f"DEBUG Assistant: Called with {len(state.get('messages', []))} messages, user_info={state.get('user_info', '')[:50] if state.get('user_info') else 'empty'}...")
         while True:
             result = self.runnable.invoke(state)
+            print(f"DEBUG Assistant: LLM returned result type={type(result)}, content={getattr(result, 'content', '')[:100] if hasattr(result, 'content') else 'no content'}...")
 
             if not result.tool_calls and (
                 not result.content
@@ -349,6 +352,8 @@ primary_assistant_prompt = ChatPromptTemplate.from_messages(
             " When searching, be persistent. Expand your query bounds if the first search returns no results. "
             " If a search comes up empty, expand your search before giving up."
             "\n\nCurrent user flight information:\n<Flights>\n{user_info}\n</Flights>"
+            "\nNote: If the Flights section is empty, the user's passenger ID may not have been verified yet. "
+            "If the user asks about their specific bookings and you don't have their flight info, remind them to provide their passenger ID."
             "\nCurrent time: {time}.",
         ),
         ("placeholder", "{messages}"),
@@ -404,24 +409,73 @@ from langgraph.prebuilt import tools_condition
 builder = StateGraph(State, config_schema=ConfigSchema)
 
 
-def user_info(state: State, config=None):
-    """Fetch user flight info using passenger_id from configurable request context.
+import re
 
-    If no passenger_id is provided, fall back to DEFAULT_PASSENGER_ID env; otherwise
-    return an empty list to keep the graph running.
+def extract_passenger_id(messages: list) -> Optional[str]:
+    """Extract passenger ID from user messages.
+    
+    Looks for patterns like:
+    - "3442 587242" (number space number)
+    - "my id is 3442 587242"
+    - "passenger id: 3442 587242"
     """
-    cfg = (config or {}).get("configurable", {}) if config else {}
-    passenger_id = cfg.get("passenger_id")
-    # Handle empty string by treating it as None
+    # Pattern for passenger ID: digits, optional space/dash, more digits
+    pattern = r'\b(\d{3,5}[\s\-]?\d{5,7})\b'
+    
+    for msg in reversed(messages):
+        content = getattr(msg, 'content', '') if hasattr(msg, 'content') else str(msg)
+        if isinstance(content, str):
+            match = re.search(pattern, content)
+            if match:
+                # Normalize to "XXXX XXXXXX" format
+                raw_id = match.group(1)
+                # Remove dashes and normalize spaces
+                normalized = re.sub(r'[\-]', ' ', raw_id)
+                normalized = re.sub(r'\s+', ' ', normalized).strip()
+                return normalized
+    return None
+
+
+def user_info(state: State, config=None):
+    """Fetch user flight info using passenger_id from state or user messages.
+    
+    If no passenger_id is available, return a message asking for it.
+    Once provided, store it in state and fetch the user's flight info.
+    """
+    from langchain_core.messages import AIMessage
+    
+    # First check if we already have a passenger_id in state
+    passenger_id = state.get("passenger_id")
+    
+    # If not in state, try to extract from user messages
     if not passenger_id:
-        passenger_id = os.getenv("DEFAULT_PASSENGER_ID")
+        passenger_id = extract_passenger_id(state.get("messages", []))
+    
+    # If still no passenger_id, ask for it
     if not passenger_id:
-        return {"user_info": []}
-    return {
-        "user_info": fetch_user_flight_information.invoke(
+        return {
+            "user_info": "",
+            "passenger_id": None,
+            "messages": [AIMessage(content="Welcome to Swiss Airlines! To assist you with your travel needs, I'll need your passenger ID. Could you please provide your passenger ID? It's typically in the format like '3442 587242' and can be found on your booking confirmation.")],
+        }
+    
+    # We have a passenger_id - fetch user info and store the ID in state
+    try:
+        flight_info = fetch_user_flight_information.invoke(
             {}, config={"configurable": {"passenger_id": passenger_id}}
         )
-    }
+        print(f"DEBUG user_info: Found passenger_id={passenger_id}, flight_info={flight_info[:100] if flight_info else 'empty'}...")
+        return {
+            "user_info": flight_info,
+            "passenger_id": passenger_id,
+        }
+    except Exception as e:
+        print(f"DEBUG user_info: Error fetching flight info: {e}")
+        return {
+            "user_info": "",
+            "passenger_id": passenger_id,
+            "messages": [AIMessage(content=f"I found your passenger ID ({passenger_id}), but I couldn't retrieve your flight information. Let me still try to help you. What would you like assistance with?")],
+        }
 
 
 builder.add_node("fetch_user_info", user_info)
@@ -759,9 +813,20 @@ def route_to_workflow(
     "book_car_rental",
     "book_hotel",
     "book_excursion",
+    "__end__",
 ]:
-    """If we are in a delegated state, route directly to the appropriate assistant."""
+    """If we are in a delegated state, route directly to the appropriate assistant.
+    
+    If we don't have a passenger_id yet (user_info asked for it), end the graph
+    so the user can respond with their ID.
+    """
+    # If we don't have a passenger_id, we've just asked for it - end the graph
+    if not state.get("passenger_id"):
+        print(f"DEBUG route_to_workflow: No passenger_id yet, ending graph to wait for user response")
+        return "__end__"
+    
     dialog_state = state.get("dialog_state")
+    print(f"DEBUG route_to_workflow: dialog_state={dialog_state}, routing to={'primary_assistant' if not dialog_state else dialog_state[-1]}")
     if not dialog_state:
         return "primary_assistant"
     return dialog_state[-1]
