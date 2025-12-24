@@ -38,7 +38,7 @@ def fetch_user_flight_information(config: RunnableConfig) -> list[dict]:
         tickets t
         JOIN ticket_flights tf ON t.ticket_no = tf.ticket_no
         JOIN flights f ON tf.flight_id = f.flight_id
-        JOIN boarding_passes bp ON bp.ticket_no = t.ticket_no AND bp.flight_id = f.flight_id
+        LEFT JOIN boarding_passes bp ON bp.ticket_no = t.ticket_no AND bp.flight_id = f.flight_id
     WHERE 
         t.passenger_id = ?
     """

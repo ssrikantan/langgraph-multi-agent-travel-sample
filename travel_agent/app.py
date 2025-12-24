@@ -32,7 +32,6 @@ AZURE_OPENAI_DEPLOYMENT = _require_env("AZURE_AI_FOUNDRY_MODEL_DEPLOYMENT_NAME")
 AZURE_OPENAI_API_VERSION = _require_env("AZURE_OPENAI_API_VERSION")
 
 
-# client = OpenAI(api_key="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")
 llm = AzureChatOpenAI(
     azure_endpoint=AZURE_OPENAI_ENDPOINT,
     azure_deployment=AZURE_OPENAI_DEPLOYMENT,
@@ -415,11 +414,25 @@ def extract_passenger_id(messages: list) -> Optional[str]:
     """Extract passenger ID from user messages.
     
     Looks for patterns like:
+    - "[Context: passenger_id=3442 587242]" (context prefix from client)
     - "3442 587242" (number space number)
     - "my id is 3442 587242"
     - "passenger id: 3442 587242"
     """
-    # Pattern for passenger ID: digits, optional space/dash, more digits
+    # First check for context prefix pattern (from client SDK)
+    context_pattern = r'\[Context:\s*passenger_id=([^\]]+)\]'
+    
+    for msg in reversed(messages):
+        content = getattr(msg, 'content', '') if hasattr(msg, 'content') else str(msg)
+        if isinstance(content, str):
+            # Check for context prefix first
+            context_match = re.search(context_pattern, content)
+            if context_match:
+                passenger_id = context_match.group(1).strip()
+                print(f"DEBUG extract_passenger_id: Found in context prefix: {passenger_id}")
+                return passenger_id
+    
+    # Fall back to pattern matching for passenger ID: digits, optional space/dash, more digits
     pattern = r'\b(\d{3,5}[\s\-]?\d{5,7})\b'
     
     for msg in reversed(messages):
@@ -432,6 +445,7 @@ def extract_passenger_id(messages: list) -> Optional[str]:
                 # Remove dashes and normalize spaces
                 normalized = re.sub(r'[\-]', ' ', raw_id)
                 normalized = re.sub(r'\s+', ' ', normalized).strip()
+                print(f"DEBUG extract_passenger_id: Found via pattern: {normalized}")
                 return normalized
     return None
 
@@ -446,13 +460,21 @@ def user_info(state: State, config=None):
     
     # First check if we already have a passenger_id in state
     passenger_id = state.get("passenger_id")
+    print(f"DEBUG user_info: passenger_id from state={passenger_id}")
     
-    # If not in state, try to extract from user messages
+    # If not in state, try config (from client request)
+    if not passenger_id and config:
+        passenger_id = config.get("configurable", {}).get("passenger_id")
+        print(f"DEBUG user_info: passenger_id from config={passenger_id}")
+    
+    # If not in state or config, try to extract from user messages
     if not passenger_id:
         passenger_id = extract_passenger_id(state.get("messages", []))
+        print(f"DEBUG user_info: passenger_id from messages={passenger_id}")
     
     # If still no passenger_id, ask for it
     if not passenger_id:
+        print("DEBUG user_info: No passenger_id found, asking user")
         return {
             "user_info": "",
             "passenger_id": None,
@@ -460,20 +482,21 @@ def user_info(state: State, config=None):
         }
     
     # We have a passenger_id - fetch user info and store the ID in state
+    print(f"DEBUG user_info: Using passenger_id={passenger_id}")
     try:
         flight_info = fetch_user_flight_information.invoke(
             {}, config={"configurable": {"passenger_id": passenger_id}}
         )
-        print(f"DEBUG user_info: Found passenger_id={passenger_id}, flight_info={flight_info[:100] if flight_info else 'empty'}...")
+        print(f"DEBUG user_info: Found passenger_id={passenger_id}, flight_info count={len(flight_info) if flight_info else 0}")
         return {
             "user_info": flight_info,
-            "passenger_id": passenger_id,
+            "passenger_id": passenger_id,  # Store in state for future turns
         }
     except Exception as e:
         print(f"DEBUG user_info: Error fetching flight info: {e}")
         return {
             "user_info": "",
-            "passenger_id": passenger_id,
+            "passenger_id": passenger_id,  # Still store the ID even if fetch fails
             "messages": [AIMessage(content=f"I found your passenger ID ({passenger_id}), but I couldn't retrieve your flight information. Let me still try to help you. What would you like assistance with?")],
         }
 

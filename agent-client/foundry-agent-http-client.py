@@ -17,6 +17,9 @@ import httpx
 USE_STREAMING = True  # Set to False for non-streaming behavior
 SHOW_TELEMETRY = False  # Set to True to see OpenTelemetry trace output
 
+# Global conversation ID for stateful mode
+current_conversation_id = None
+
 # Set up OpenTelemetry tracing
 trace.set_tracer_provider(TracerProvider())
 tracer_provider = trace.get_tracer_provider()
@@ -40,20 +43,56 @@ def get_auth_token():
     return credential.get_token("https://ai.azure.com/.default").token
 
 
-def send_message(user_message: str, conversation_history: list = None, agent_name: str = myAgent):
+def create_conversation():
+    """Create a new conversation via the Foundry API."""
+    token = get_auth_token()
+    api_url = f"{myEndpoint}/openai/conversations?api-version=2025-11-15-preview"
+    
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    
+    with httpx.Client(timeout=30.0) as client:
+        response = client.post(api_url, headers=headers, json={})
+        if response.status_code != 200:
+            print(f"Error creating conversation: HTTP {response.status_code}: {response.text}")
+            return None
+        data = response.json()
+        return data.get("id")
+
+
+def get_or_create_conversation_id():
+    """Get current conversation ID or create a new one."""
+    global current_conversation_id
+    if not current_conversation_id:
+        current_conversation_id = create_conversation()
+        print(f"Created new conversation: {current_conversation_id}")
+    return current_conversation_id
+
+
+def reset_conversation():
+    """Reset the conversation by creating a new one."""
+    global current_conversation_id
+    current_conversation_id = create_conversation()
+    return current_conversation_id
+
+
+def send_message(user_message: str, agent_name: str = myAgent):
     """Send a message to the agent and return the response.
     
-    Uses stateless approach: sends full conversation history each turn
-    since the hosted agent uses InMemorySaver which doesn't persist.
+    Uses stateful approach: server maintains conversation history via conversation_id.
+    Client only sends the new message each turn.
     
     Args:
         user_message: The user's message to send
-        conversation_history: Full conversation history to send
         agent_name: The name of the agent to call
         
     Returns:
         tuple: (response_text, conversation_id, full_response_data)
     """
+    global current_conversation_id
+    
     token = get_auth_token()
     api_url = f"{myEndpoint}/openai/responses?api-version=2025-11-15-preview"
     
@@ -62,19 +101,20 @@ def send_message(user_message: str, conversation_history: list = None, agent_nam
         "Content-Type": "application/json"
     }
     
-    # Build input messages from history + new message
-    input_messages = []
-    if conversation_history:
-        for msg in conversation_history:
-            input_messages.append({"role": msg["role"], "content": msg["content"]})
-    input_messages.append({"role": "user", "content": user_message})
+    # Get or create conversation
+    conversation_id = get_or_create_conversation_id()
     
-    # Build the payload - stateless approach, no conversation ID
+    # Build the payload - stateful approach with conversation ID
     payload = {
-        "input": input_messages,
+        "input": [{"role": "user", "content": user_message}],
+        "conversation": conversation_id,  # Server maintains history
         "agent": {"name": agent_name, "type": "agent_reference"},
         "stream": USE_STREAMING
     }
+    
+    # Debug: show what we're sending
+    print(f"\n[DEBUG] Sending to conversation: {conversation_id}")
+    print(f"[DEBUG] Input: {user_message[:50]}...")
     
     response_text = ""
     response_data = None
@@ -116,11 +156,16 @@ def send_message(user_message: str, conversation_history: list = None, agent_nam
                                 response_data = event.get("response", {})
                             
                             elif event_type == "response.output_item.added":
-                                # New output item (message) started
+                                # New output item (message or function call) started
                                 item = event.get("item", {})
                                 role = item.get("role", "")
+                                item_type = item.get("type", "")
                                 if role == "assistant":
                                     print("\nAssistant: ", end="", flush=True)
+                                elif item_type == "function_call":
+                                    # Show tool being called
+                                    func_name = item.get("name", "unknown")
+                                    print(f"\n🔧 Calling tool: {func_name}", flush=True)
                             
                         except json.JSONDecodeError:
                             pass
@@ -161,25 +206,27 @@ def send_message(user_message: str, conversation_history: list = None, agent_nam
 def interactive_chat():
     """Run an interactive chat session with the agent.
     
-    Uses stateless approach: client maintains full history and sends
-    all messages each turn (since hosted agent uses InMemorySaver).
+    Uses stateful approach: server maintains conversation history via conversation_id.
+    Client only sends new messages each turn.
     """
     print("=" * 60)
-    print("Travel Support Agent - Interactive Chat")
+    print("Travel Support Agent - Interactive Chat (HTTP)")
     print("=" * 60)
     print(f"Agent: {myAgent}")
     print(f"Streaming: {'Enabled' if USE_STREAMING else 'Disabled'}")
-    print(f"Mode: Stateless (client maintains history)")
+    print(f"Mode: Stateful (server maintains history via conversation_id)")
     print("\nType 'quit' or 'exit' to end the conversation.")
     print("Type 'new' to start a new conversation.")
-    print("Type 'history' to see conversation history.")
+    print("Type 'conversation' to see current conversation ID.")
     print("=" * 60)
     
     # Get an existing agent
     agent = project_client.agents.get(agent_name=myAgent)
     print(f"Connected to agent: {agent.name}\n")
     
-    conversation_history = []
+    # Create initial conversation
+    conversation_id = get_or_create_conversation_id()
+    print(f"Conversation ID: {conversation_id}\n")
     
     while True:
         try:
@@ -196,65 +243,48 @@ def interactive_chat():
             break
         
         if user_input.lower() == 'new':
-            conversation_history = []
-            print("\n--- Starting new conversation ---\n")
+            conversation_id = reset_conversation()
+            print(f"\n--- Starting new conversation (ID: {conversation_id}) ---\n")
             continue
         
-        if user_input.lower() == 'history':
-            print("\n--- Conversation History ---")
-            for i, msg in enumerate(conversation_history):
-                role = msg["role"].capitalize()
-                content = msg["content"][:100] + "..." if len(msg["content"]) > 100 else msg["content"]
-                print(f"{i+1}. {role}: {content}")
-            print(f"--- Total: {len(conversation_history)} messages ---\n")
+        if user_input.lower() == 'conversation':
+            print(f"\nCurrent Conversation ID: {current_conversation_id}")
+            print("(Server maintains conversation history)\n")
             continue
         
-        # Send message with full history
+        # Send only the new message - server handles history
         with tracer.start_as_current_span("agent-turn") as span:
             span.set_attribute("user.message", user_input[:100])
-            span.set_attribute("conversation.turn", len(conversation_history) + 1)
-            span.set_attribute("history.length", len(conversation_history))
+            span.set_attribute("conversation.id", current_conversation_id or "none")
             
-            response_text, conversation_id, response_data = send_message(
+            response_text, conv_id, response_data = send_message(
                 user_input,
-                conversation_history=conversation_history,
                 agent_name=agent.name
             )
             
             if response_text:
-                # Add both user message and response to history
-                conversation_history.append({"role": "user", "content": user_input})
-                conversation_history.append({"role": "assistant", "content": response_text})
                 span.set_attribute("assistant.response.length", len(response_text))
-            
-            if conversation_id:
-                span.set_attribute("conversation.id", conversation_id)
 
 
 def single_turn_demo():
     """Run a single-turn demo (original behavior)."""
-    # Generate a unique conversation ID for telemetry tracking
-    local_conversation_id = str(uuid.uuid4())
-    print(f"Local Conversation ID: {local_conversation_id}")
-
     # Get an existing agent
     agent = project_client.agents.get(agent_name=myAgent)
     print(f"Retrieved agent: {agent.name}")
 
-    # Make direct HTTP request to avoid SDK parsing issues
+    # Create a conversation
+    conversation_id = get_or_create_conversation_id()
+    print(f"Conversation ID: {conversation_id}")
+
+    # Make direct HTTP request
     with tracer.start_as_current_span("agent-request") as span:
-        span.set_attribute("local.conversation.id", local_conversation_id)
+        span.set_attribute("conversation.id", conversation_id)
         span.set_attribute("agent.name", agent.name)
         
         print("\n--- Sending: 'Hey there! What time is my flight?' ---")
-        response_text, conversation_id, response_data = send_message(
-            "Hey there! What time is my flight?",
-            conversation_history=None  # No history for single turn
+        response_text, conv_id, response_data = send_message(
+            "Hey there! What time is my flight?"
         )
-        
-        if conversation_id:
-            span.set_attribute("foundry.conversation.id", conversation_id)
-            print(f"\nFoundry Conversation ID: {conversation_id}")
         
         if response_data:
             response_id = response_data.get("id", "unknown")

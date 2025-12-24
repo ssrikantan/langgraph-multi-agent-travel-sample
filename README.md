@@ -14,11 +14,11 @@ This project is a modified LangGraph tutorial sample tailored to exercise Micros
 - Env samples in [.env.example](.env.example).
 
 ## File overview
-Packaged to run as a hosted agent in Microsoft Foundry via the LangGraph adapter (see container.py and workflow_core.py).
+Packaged to run as a hosted agent in Microsoft Foundry via the LangGraph adapter.
 
-- container.py — Azure-hosted entrypoint; loads env, sets up observability, and runs the LangGraph adapter via create_agent().
-- workflow_core.py — Wraps part_4_graph for Agent Server; loads env, selects credential (MSI or DefaultAzureCredential), exposes create_agent/get_credential.
-- travel_agent/app.py — Core LangGraph graph and state machine; wiring of assistants, tools, routing, prompts, and interrupts.
+- **container.py** — Azure-hosted entrypoint; loads env, sets up observability, and runs the LangGraph adapter via create_agent().
+- **workflow_core.py** — Exposes create_agent() that wraps part_4_graph with the Agent Framework adapter; handles credential selection.
+- **travel_agent/app.py** — Core LangGraph graph (part_4_graph) with multi-agent routing, tools, state management, and checkpointing.
 - travel_agent/utilities.py — Shared helper for tool fallbacks and pretty-printing streamed events.
 - travel_agent/data/db.py — SQLite path and date adjustment helpers for seeded travel data.
 - travel_agent/tools/flight_tools.py — Flight search/update/cancel tool fns backed by SQLite.
@@ -39,6 +39,12 @@ Packaged to run as a hosted agent in Microsoft Foundry via the LangGraph adapter
 ## Running locally (quick start)
 1) Copy `.env.example` to `.env` and adjust values.
 2) `python -m clients.cli_runner` (interactive streaming demo), or `python -m clients.http_client "Hi there"` against a running server.
+
+### Providing passenger_id
+The sample data uses passenger_id `3442 587242`. You can provide it in three ways:
+1. **In conversation**: Just mention it in your message (e.g., "my passenger id is 3442 587242")
+2. **Via client config**: Use `--passenger-id` flag with http_client.py
+3. **Default from .env**: Set `DEFAULT_PASSENGER_ID` in your `.env` file
 
 ## Deploying as a hosted agent (Foundry)
 1) Ensure env vars in your deployment (matches `.env.example`).
@@ -61,6 +67,47 @@ Use these messages in order to exercise the full flow (the sample data uses pass
 12. "Are they available while I'm there?"
 13. "interesting - i like the museums, what options are there? "
 14. "OK great pick one and book it for my second day there."
+
+## Request/Response Pipeline (Foundry → LangGraph)
+
+Understanding how config and state flow through the system:
+
+### 1. Client Request
+Client (e.g., [foundry-agent-client-sdk.py](agent-client/foundry-agent-client-sdk.py)) sends messages to the Foundry Agent Server endpoint. The server assigns or receives a `conversation_id` to track the conversation.
+
+### 2. Container Startup
+[container.py](container.py) starts the Agent Framework server:
+- Loads environment variables and credentials
+- Creates the LangGraph adapter via `create_agent()` from [workflow_core.py](workflow_core.py)
+- Calls `adapter.run()` to listen for incoming requests
+
+### 3. Azure SDK Adapter (`from_langgraph`)
+When a request arrives, the `azure.ai.agentserver.langgraph.from_langgraph()` adapter (internal SDK code):
+- Extracts `conversation_id` from the incoming Foundry request
+- Creates a `RunnableConfig` with `{"configurable": {"thread_id": conversation_id}}`
+- Also includes any `passenger_id` from the request in the config
+- Calls `part_4_graph.invoke(state, config=config)` directly with this config
+
+### 4. LangGraph Execution
+The travel agent graph (`part_4_graph`):
+- Uses the `thread_id` from config to load checkpointed state (passenger_id, dialog_state, etc.)
+- Processes the new user message
+- Tools access `passenger_id` from `config.get("configurable", {}).get("passenger_id")`
+- Updates state and saves checkpoint
+- Returns updated state with new messages
+
+### 5. Response Flow
+The adapter:
+- Receives the final state from the graph
+- Extracts messages for the response
+- Formats according to Foundry's response protocol
+- Sends back to the client (streaming or non-streaming)
+
+### Key Points
+- **Single graph, single checkpoint** - No wrapper graph, simpler state management
+- **You don't create the config** - the `from_langgraph` adapter creates it from Foundry's `conversation_id`
+- **Thread persistence is automatic** - the `thread_id` ensures conversation state is maintained across multiple turns
+- **passenger_id flows through config** - Tools receive it via `config.get("configurable", {}).get("passenger_id")`
 
 ## Notes
 - Default passenger_id in sample data: `3442 587242`. Provide it in chat or via `configurable.passenger_id` when calling the hosted agent.

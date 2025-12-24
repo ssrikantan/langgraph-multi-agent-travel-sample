@@ -1,23 +1,17 @@
 """Credential helper and LangGraph adapter for Foundry-hosted agent.
 
-Mirrors the structure of the agent framework sample's workflow_core.py so it can be
-consumed by a container entrypoint (e.g., container.py) that hosts the agent in
-Azure AI Foundry/Agent Server.
+Provides credential selection and exposes the travel agent graph directly
+to the Agent Framework adapter without unnecessary wrappers.
 """
 
 from __future__ import annotations
 
 import os
-import time
 import logging
-from typing import Any, Dict, AsyncGenerator, AsyncIterator
 
 from dotenv import load_dotenv
 from azure.ai.agentserver.langgraph import from_langgraph
 from azure.identity.aio import DefaultAzureCredential, ManagedIdentityCredential
-from langgraph.graph import StateGraph, START, END, MessagesState
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from langchain_core.runnables import RunnableConfig
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -34,84 +28,15 @@ def get_credential():
     return ManagedIdentityCredential() if os.getenv("MSI_ENDPOINT") else DefaultAzureCredential()
 
 
-def invoke_travel_agent(state: MessagesState, config: RunnableConfig) -> MessagesState:
-    """Wrapper node that invokes the travel agent graph and returns MessagesState.
-    
-    The config parameter is passed automatically by LangGraph and contains
-    the thread_id from Foundry's conversation_id for state persistence.
-    """
-    logger.info(f"invoke_travel_agent: input messages count={len(state.get('messages', []))}")
-    
-    # Convert MessagesState to travel agent's State format
-    input_messages = list(state.get("messages", []))
-    
-    # DEBUG: First verify wrapper is working by adding a test message
-    logger.info("invoke_travel_agent: Starting travel agent invocation")
-    
-    travel_state = {
-        "messages": input_messages,
-        "user_info": "",
-        "passenger_id": None,  # Will be extracted from user messages by the graph
-        # Note: Don't include dialog_state - let the graph initialize it properly
-    }
-    
-    # Use the thread_id from the config passed by the adapter
-    # This ensures conversation state is preserved across turns
-    thread_id = config.get("configurable", {}).get("thread_id")
-    if not thread_id:
-        import uuid
-        thread_id = str(uuid.uuid4())
-        logger.warning(f"invoke_travel_agent: No thread_id in config, using generated: {thread_id}")
-    else:
-        logger.info(f"invoke_travel_agent: Using thread_id from Foundry: {thread_id}")
-    
-    # Create config for the inner graph with the same thread_id
-    inner_config = {"configurable": {"thread_id": thread_id}}
-    
-    try:
-        # Use invoke to get the final state
-        logger.info(f"invoke_travel_agent: Calling part_4_graph.invoke with thread_id={thread_id}")
-        result = part_4_graph.invoke(travel_state, config=inner_config)
-        logger.info(f"invoke_travel_agent: part_4_graph returned, result keys: {result.keys() if result else 'None'}")
-        
-        # Extract messages from the result
-        output_messages = result.get("messages", [])
-        logger.info(f"invoke_travel_agent: output messages count={len(output_messages)}")
-        
-        # Log all messages for debugging
-        for i, msg in enumerate(output_messages):
-            msg_type = type(msg).__name__
-            msg_content = getattr(msg, 'content', str(msg))[:100] if hasattr(msg, 'content') else str(msg)[:100]
-            logger.info(f"invoke_travel_agent: message[{i}] type={msg_type}, content={msg_content}")
-        
-        # Return all messages (input + output from agent)
-        return {"messages": output_messages}
-    except Exception as e:
-        logger.error(f"invoke_travel_agent: Error invoking travel agent: {e}", exc_info=True)
-        # Return error message so we can see it in the response
-        error_msg = AIMessage(content=f"Error occurred while processing your request: {str(e)}")
-        return {"messages": input_messages + [error_msg]}
-
-
-def build_wrapper_graph():
-    """Build a simple wrapper graph that uses MessagesState for compatibility."""
-    builder = StateGraph(MessagesState)
-    builder.add_node("travel_agent", invoke_travel_agent)
-    builder.add_edge(START, "travel_agent")
-    builder.add_edge("travel_agent", END)
-    return builder.compile()
-
-
-# Build the wrapper graph
-wrapper_graph = build_wrapper_graph()
-
-
 def create_agent(chat_client=None, as_agent: bool = True):
     """Expose the LangGraph as an Agent Framework-compatible agent.
 
     The chat_client parameter is accepted for parity with the agent-framework sample,
     but is not required by the LangGraph adapter.
+    
+    Uses the travel agent graph directly - no wrapper needed.
+    The from_langgraph adapter handles state schema translation automatically.
     """
-    logger.info("create_agent: Using wrapper graph with MessagesState")
-    adapter = from_langgraph(wrapper_graph)
+    logger.info("create_agent: Using part_4_graph directly (no wrapper)")
+    adapter = from_langgraph(part_4_graph)
     return adapter.as_agent() if as_agent else adapter

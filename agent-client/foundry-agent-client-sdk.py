@@ -29,8 +29,9 @@ token_provider = get_bearer_token_provider(
     "https://ai.azure.com/.default"
 )
 
-# Global client - will be refreshed as needed
+# Global client and thread tracking
 client = None
+current_thread_id = None
 
 
 def create_client():
@@ -51,45 +52,55 @@ def refresh_token():
         client.api_key = token_provider()
 
 
-def build_conversation_input(history: list, new_message: str) -> list:
-    """Build the input for a multi-turn conversation.
+def get_or_create_thread_id() -> str:
+    """Get the current thread_id or create a new one via Foundry API.
     
-    Published applications are stateless - we must send the full
-    conversation history with each request.
+    Uses the Foundry conversations.create() API to create a server-side
+    conversation that persists state across requests.
     """
-    messages = []
-    
-    for msg in history:
-        messages.append({
-            "role": msg["role"],
-            "content": msg["content"]
-        })
-    
-    messages.append({
-        "role": "user",
-        "content": new_message
-    })
-    
-    return messages
+    global current_thread_id, client
+    if not current_thread_id:
+        # Create a conversation using Foundry's conversations API
+        refresh_token()
+        conversation = client.conversations.create()
+        current_thread_id = conversation.id
+        print(f"Created new conversation: {current_thread_id}")
+    return current_thread_id
 
 
-def send_message_streaming(conversation_history: list, user_message: str) -> str:
-    """Send a message using streaming and return the response."""
+def reset_thread():
+    """Reset the conversation by creating a new thread_id via Foundry API."""
+    global current_thread_id, client
+    refresh_token()
+    conversation = client.conversations.create()
+    current_thread_id = conversation.id
+    return current_thread_id
+
+
+def send_message_streaming(user_message: str, passenger_id: str = None) -> str:
+    """Send a message using streaming and return the response.
+    
+    Uses stateful approach: framework maintains conversation history via conversation_id.
+    Pass input directly with conversation parameter for context.
+    """
     global client
     
-    input_messages = build_conversation_input(conversation_history, user_message)
+    conversation_id = get_or_create_thread_id()
     
     # Refresh token before request
     refresh_token()
     
-    # Create streaming response with agent reference
-    # Use extra_body to pass the agent reference since SDK doesn't have native support
+    # Build extra_body with agent reference
+    extra_body = {
+        "agent": {"name": AGENT_NAME, "type": "agent_reference"},
+    }
+    
+    # Create streaming response with conversation for context and input for the message
     stream = client.responses.create(
         stream=True,
-        input=input_messages,
-        extra_body={
-            "agent": {"name": AGENT_NAME, "type": "agent_reference"}
-        }
+        input=[{"role": "user", "content": user_message}],  # Message as list
+        conversation=conversation_id,  # Conversation for context
+        extra_body=extra_body
     )
     
     response_text = ""
@@ -132,22 +143,35 @@ def send_message_streaming(conversation_history: list, user_message: str) -> str
     return response_text
 
 
-def send_message_non_streaming(conversation_history: list, user_message: str) -> str:
-    """Send a message without streaming and return the response."""
+def send_message_non_streaming(user_message: str, passenger_id: str = None) -> str:
+    """Send a message without streaming and return the response.
+    
+    Uses stateful approach: framework maintains conversation history via conversation_id.
+    Pass input directly with conversation parameter for context.
+    """
     global client
     
-    input_messages = build_conversation_input(conversation_history, user_message)
+    conversation_id = get_or_create_thread_id()
     
     # Refresh token before request
     refresh_token()
     
-    # Create response with agent reference
-    # Use extra_body to pass the agent reference since SDK doesn't have native support
+    # Build extra_body with agent reference
+    extra_body = {
+        "agent": {"name": AGENT_NAME, "type": "agent_reference"},
+    }
+    
+    # Create response with conversation for context and input for the message
+    response = client.responses.create(
+        input=[{"role": "user", "content": user_message}],  # Message as list
+        conversation=conversation_id,  # Conversation for context
+        extra_body=extra_body
+    )
+    
+    # Create response with agent reference and thread_id
     response = client.responses.create(
         input=input_messages,
-        extra_body={
-            "agent": {"name": AGENT_NAME, "type": "agent_reference"}
-        }
+        extra_body=extra_body
     )
     
     # Get the response text
@@ -159,16 +183,16 @@ def send_message_non_streaming(conversation_history: list, user_message: str) ->
     return response_text
 
 
-def send_message(conversation_history: list, user_message: str) -> str:
+def send_message(user_message: str, passenger_id: str = None) -> str:
     """Send a message to the agent and return the response.
     
-    Uses stateless approach: client maintains full history and sends
-    all messages each turn.
+    Uses stateful approach: framework maintains conversation history via thread_id.
+    Client only sends new messages; server tracks conversation state.
     """
     if USE_STREAMING:
-        return send_message_streaming(conversation_history, user_message)
+        return send_message_streaming(user_message, passenger_id)
     else:
-        return send_message_non_streaming(conversation_history, user_message)
+        return send_message_non_streaming(user_message, passenger_id)
 
 
 def interactive_chat():
@@ -178,17 +202,19 @@ def interactive_chat():
     print("=" * 60)
     print(f"Agent: {AGENT_NAME}")
     print(f"Streaming: {'Enabled' if USE_STREAMING else 'Disabled'}")
-    print(f"Mode: Stateless (client maintains history)")
+    print(f"Mode: Stateful (Foundry manages conversation server-side)")
     print("\nType 'quit' or 'exit' to end the conversation.")
     print("Type 'new' to start a new conversation.")
-    print("Type 'history' to see conversation history.")
+    print("Type 'conversation' to see current conversation ID.")
     print("=" * 60)
     
     # Create client
     create_client()
     print(f"Connected to: {BASE_URL}\n")
     
-    conversation_history = []
+    # Initialize conversation via Foundry API
+    conversation_id = get_or_create_thread_id()
+    print(f"Conversation ID: {conversation_id}\n")
     
     while True:
         try:
@@ -205,30 +231,18 @@ def interactive_chat():
             break
         
         if user_input.lower() == 'new':
-            conversation_history = []
-            print("\n--- Starting new conversation ---\n")
+            conversation_id = reset_thread()
+            print(f"\n--- Starting new conversation (ID: {conversation_id}) ---\n")
             continue
         
-        if user_input.lower() == 'history':
-            print("\n--- Conversation History ---")
-            for i, msg in enumerate(conversation_history):
-                role = msg["role"].capitalize()
-                content = msg["content"][:100] + "..." if len(msg["content"]) > 100 else msg["content"]
-                print(f"{i+1}. {role}: {content}")
-            print(f"--- Total: {len(conversation_history)} messages ---\n")
+        if user_input.lower() in ['conversation', 'thread']:
+            print(f"\nCurrent Conversation ID: {conversation_id}")
+            print("(Foundry maintains conversation history server-side)\n")
             continue
         
-        # Send message with full history
+        # Send only the new message - Foundry handles history via conversation
         try:
-            response_text = send_message(
-                conversation_history,
-                user_input
-            )
-            
-            if response_text:
-                # Add both user message and response to history
-                conversation_history.append({"role": "user", "content": user_input})
-                conversation_history.append({"role": "assistant", "content": response_text})
+            response_text = send_message(user_input)
         
         except Exception as e:
             print(f"\nError: {e}")
@@ -247,12 +261,13 @@ def single_turn_demo():
     create_client()
     print(f"Connected to: {BASE_URL}")
     
+    # Get conversation ID
+    conversation_id = get_or_create_thread_id()
+    print(f"Conversation ID: {conversation_id}")
+    
     print("\n--- Sending: 'Hey there! What time is my flight?' ---")
     
-    response_text = send_message(
-        [],  # No history
-        "Hey there! What time is my flight?"
-    )
+    response_text = send_message("Hey there! What time is my flight?")
     
     print(f"\n--- Response received ({len(response_text)} chars) ---")
 
