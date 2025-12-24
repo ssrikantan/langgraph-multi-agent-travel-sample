@@ -26,10 +26,8 @@ Packaged to run as a hosted agent in Microsoft Foundry via the LangGraph adapter
 - travel_agent/tools/car_rental_tools.py — Car rental search/book/update/cancel tool fns.
 - travel_agent/tools/excursions.py — Excursion search/book/update/cancel tool fns.
 - travel_agent/tools/policies.py — Policy lookup tool using Azure OpenAI.
-- travel_agent/stream_demo.py — Streaming helper that runs the graph and auto-approves interrupts for local demos.
-- travel_agent/server_demo.py — Non-streaming CLI helper that walks the tutorial Q&A flow with optional approvals.
-- clients/cli_runner.py — Local interactive CLI that streams events and prompts for approvals; uses stream_demo.
-- clients/http_client.py — Minimal HTTP/SSE client for the hosted agent (send one message, stream response or poll).
+- agent-client/ — SDK clients for interacting with the Foundry-hosted agent (see folder for details).
+- test_local.py — Quick local test to verify the LangGraph works in-process.
 
 ## Prerequisites
 - Python 3.10+ and `pip install -r requirements.txt`
@@ -38,13 +36,12 @@ Packaged to run as a hosted agent in Microsoft Foundry via the LangGraph adapter
 
 ## Running locally (quick start)
 1) Copy `.env.example` to `.env` and adjust values.
-2) `python -m clients.cli_runner` (interactive streaming demo), or `python -m clients.http_client "Hi there"` against a running server.
+2) Run `python test_local.py` for a quick test, or use the SDK clients in `agent-client/` to interact with the hosted agent.
 
 ### Providing passenger_id
-The sample data uses passenger_id `3442 587242`. You can provide it in three ways:
+The sample data uses passenger_id `3442 587242`. You can provide it in two ways:
 1. **In conversation**: Just mention it in your message (e.g., "my passenger id is 3442 587242")
-2. **Via client config**: Use `--passenger-id` flag with http_client.py
-3. **Default from .env**: Set `DEFAULT_PASSENGER_ID` in your `.env` file
+2. **Default from .env**: Set `DEFAULT_PASSENGER_ID` in your `.env` file
 
 ## Deploying as a hosted agent (Foundry)
 1) Ensure env vars in your deployment (matches `.env.example`).
@@ -108,6 +105,223 @@ The adapter:
 - **You don't create the config** - the `from_langgraph` adapter creates it from Foundry's `conversation_id`
 - **Thread persistence is automatic** - the `thread_id` ensures conversation state is maintained across multiple turns
 - **passenger_id flows through config** - Tools receive it via `config.get("configurable", {}).get("passenger_id")`
+
+---
+
+## Conversation State Management: Foundry ↔ LangGraph
+
+This section explains how **Foundry Hosted Agents** manage conversation state and how it maps to **LangGraph's checkpointer**.
+
+### Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              CLIENT LAYER                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────────────┐    ┌─────────────────────┐    ┌─────────────────┐  │
+│  │   SDK Client        │    │   HTTP Client       │    │  Playground     │  │
+│  │   (OpenAI SDK)      │    │   (REST API)        │    │  (Foundry UI)   │  │
+│  └──────────┬──────────┘    └──────────┬──────────┘    └────────┬────────┘  │
+│             │                          │                         │          │
+│             │  conversation_id         │  conversation_id        │          │
+│             │  = conv_abc123...        │  = conv_xyz789...       │          │
+│             ▼                          ▼                         ▼          │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                         │
+                                         ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         FOUNDRY AGENT SERVER                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │                    from_langgraph() Adapter                         │   │
+│   │                                                                     │   │
+│   │   1. Receives request with conversation_id                          │   │
+│   │   2. Creates RunnableConfig:                                        │   │
+│   │      {                                                              │   │
+│   │        "configurable": {                                            │   │
+│   │          "thread_id": "conv_abc123...",  ◄──Foundry conversation_id │   │
+│   │          "passenger_id": "3442 587242"   ◄── Business data          │   │
+│   │        }                                                            │   │
+│   │      }                                                              │   │
+│   │   3. Invokes graph.invoke(messages, config)                         │   │
+│   │                                                                     │   │
+│   └───────────────────────────────┬─────────────────────────────────────┘   │
+│                                   │                                         │
+│                                   ▼                                         │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │                      LangGraph (part_4_graph)                       │   │
+│   │                                                                     │   │
+│   │   ┌───────────────────┐    ┌───────────────────────────────────┐    │   │
+│   │   │   Checkpointer    │◄──►│         Graph Execution           │    │   │
+│   │   │  (InMemorySaver)  │    │                                   │    │   │
+│   │   │                   │    │  • Loads state for thread_id      │    │   │
+│   │   │  thread_id →      │    │  • Runs nodes (user_info, etc.)   │    │   │
+│   │   │  ┌─────────────┐  │    │  • Executes tools                 │    │   │
+│   │   │  │ conv_abc123 │  │    │  • Saves updated state            │    │   │
+│   │   │  │ ─────────── │  │    │                                   │    │   │
+│   │   │  │ messages: []│  │    └───────────────────────────────────┘    │   │
+│   │   │  │ passenger_id│  │                                             │   │
+│   │   │  │ dialog_state│  │                                             │   │
+│   │   │  └─────────────┘  │                                             │   │
+│   │   │                   │                                             │   │
+│   │   │  ┌─────────────┐  │                                             │   │
+│   │   │  │ conv_xyz789 │  │  ◄── Different conversation = different     │   │
+│   │   │  │ ─────────── │  │      isolated state                         │   │
+│   │   │  │ messages: []│  │                                             │   │
+│   │   │  │ passenger_id│  │                                             │   │
+│   │   │  └─────────────┘  │                                             │   │
+│   │   └───────────────────┘                                             │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### How Conversation State Flows
+
+```
+Turn 1: User says "When is my flight?"
+─────────────────────────────────────────────────────────────────────────────
+
+  Client                          Foundry                         LangGraph
+    │                               │                                │
+    │  POST /responses              │                                │
+    │  conversation=null ──────────►│                                │
+    │                               │                                │
+    │                               │  Creates conversation          │
+    │                               │  conv_abc123                   │
+    │                               │                                │
+    │                               │  config = {                    │
+    │                               │    "thread_id": "conv_abc123"  │
+    │                               │  }                             │
+    │                               │                                │
+    │                               │  graph.invoke(msg, config) ───►│
+    │                               │                                │
+    │                               │                                │ Checkpointer.get("conv_abc123")
+    │                               │                                │ → No state found (new)
+    │                               │                                │
+    │                               │                                │ Run graph nodes
+    │                               │                                │ → No passenger_id
+    │                               │                                │ → Ask user for it
+    │                               │                                │
+    │                               │                                │ Checkpointer.put("conv_abc123", state)
+    │                               │                                │ → Saves: messages, dialog_state
+    │                               │◄────────────────────────────── │
+    │◄────────────────────────────  │                                │
+    │  Response: "Please provide    │                                │
+    │   your passenger ID"          │                                │
+    │  conversation=conv_abc123     │                                │
+
+
+Turn 2: User says "passenger id is 3442 587242"
+─────────────────────────────────────────────────────────────────────────────
+
+  Client                          Foundry                         LangGraph
+    │                               │                                │
+    │  POST /responses              │                                │
+    │  conversation=conv_abc123 ───►│                                │
+    │                               │                                │
+    │                               │  config = {                    │
+    │                               │    "thread_id": "conv_abc123"  │
+    │                               │  }                             │
+    │                               │                                │
+    │                               │  graph.invoke(msg, config) ───►│
+    │                               │                                │
+    │                               │                                │ Checkpointer.get("conv_abc123")
+    │                               │                                │ → Loads previous state!
+    │                               │                                │   - Previous messages
+    │                               │                                │   - dialog_state
+    │                               │                                │
+    │                               │                                │ extract_passenger_id(messages)
+    │                               │                                │ → Finds "3442 587242"
+    │                               │                                │
+    │                               │                                │ fetch_user_flight_information()
+    │                               │                                │ → Returns flight details
+    │                               │                                │
+    │                               │                                │ Checkpointer.put("conv_abc123", state)
+    │                               │                                │ → Saves: messages, passenger_id
+    │                               │◄────────────────────────────── │
+    │◄────────────────────────────  │                                │
+    │  Response: "Your flight       │                                │
+    │   LX0112 departs at..."       │                                │
+```
+
+### The Key Mapping: conversation_id → thread_id
+
+| Foundry Concept | LangGraph Concept | Purpose |
+|-----------------|-------------------|---------|
+| `conversation_id` | `thread_id` | Identifies a unique conversation session |
+| Foundry Conversations API | `InMemorySaver` checkpointer | Persists state across turns |
+| `client.conversations.create()` | N/A (Foundry creates it) | Initiates a new conversation |
+| Messages in conversation | `state["messages"]` | The conversation history |
+
+### What Foundry's `from_langgraph` Adapter Does
+
+The adapter (from `azure.ai.agentserver.langgraph`) is the bridge between Foundry and LangGraph:
+
+```python
+# Pseudocode of what the adapter does internally
+def handle_request(foundry_request):
+    # 1. Extract conversation_id from Foundry request
+    conversation_id = foundry_request.conversation.id  # e.g., "conv_abc123"
+    
+    # 2. Build LangGraph config with thread_id = conversation_id
+    config = {
+        "configurable": {
+            "thread_id": conversation_id,  # ◄── THE KEY MAPPING
+            "passenger_id": foundry_request.get("passenger_id"),
+        }
+    }
+    
+    # 3. Invoke the LangGraph graph
+    result = langgraph_graph.invoke(
+        {"messages": foundry_request.messages},
+        config=config  # ◄── Passes thread_id to checkpointer
+    )
+    
+    # 4. Return response to Foundry
+    return format_response(result)
+```
+
+### Why This Matters
+
+1. **You don't manage thread_id manually** when hosted on Foundry - the adapter handles it
+2. **State is automatically persisted** across conversation turns via the checkpointer
+3. **Each conversation is isolated** - different `conversation_id` = different `thread_id` = separate state
+4. **Business data (passenger_id)** flows through the same config mechanism
+
+### Local vs Hosted Comparison
+
+| Scenario | Who creates thread_id? | Where is state stored? |
+|----------|----------------------|----------------------|
+| **Local (test_local.py)** | Your code: `config = {"configurable": {"thread_id": "test-001"}}` | `InMemorySaver` (in-process memory) |
+| **Foundry Hosted** | Foundry adapter: maps `conversation_id` → `thread_id` | `InMemorySaver` (container memory) |
+| **Production (future)** | Same as hosted | Should use persistent store (Redis, Postgres, etc.) |
+
+### Client Code Comparison
+
+**SDK Client (Project Endpoint) - Stateful:**
+```python
+# Foundry manages conversation server-side
+conversation = client.conversations.create()  # Get Foundry conversation_id
+response = client.responses.create(
+    input=[{"role": "user", "content": message}],
+    conversation=conversation.id,  # Foundry maps this to LangGraph thread_id
+)
+```
+
+**Application Endpoint Client - Stateless:**
+```python
+# Client maintains full history (no server-side state)
+conversation_history.append({"role": "user", "content": message})
+response = client.responses.create(
+    input=conversation_history,  # Full history each turn
+)
+# Note: Each request is independent - no thread_id mapping
+```
+
+---
 
 ## Notes
 - Default passenger_id in sample data: `3442 587242`. Provide it in chat or via `configurable.passenger_id` when calling the hosted agent.

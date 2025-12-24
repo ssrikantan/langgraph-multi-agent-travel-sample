@@ -1,23 +1,27 @@
 # Foundry Agent Client using OpenAI SDK
-#
+# This client connects to the LangGraph 'Hosted Agent' in Microsoft Foundry.
 # Uses the OpenAI-compatible Responses API with Azure authentication.
 # See: https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/publish-agent
 #
 # Before running:
-#    pip install openai azure-identity
+#    pip install openai azure-identity python-dotenv
 #    az login
 
-import json
+import os
+from dotenv import load_dotenv
 from openai import OpenAI
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
-# Configuration
-USE_STREAMING = True  # Set to False for non-streaming behavior
+# Load environment variables from .env file
+load_dotenv()
+
+# Configuration from .env
+USE_STREAMING = os.getenv("USE_STREAMING", "true").lower() == "true"
 
 # Foundry endpoint components
-FOUNDRY_RESOURCE_NAME = "sansri-foundry-hosted-agents-pro"
-PROJECT_NAME = "sansri-foundry-hosted-agents-project"
-AGENT_NAME = "travel-multi-agent"  # Agent name to reference
+FOUNDRY_RESOURCE_NAME = os.getenv("FOUNDRY_RESOURCE_NAME", "")
+PROJECT_NAME = os.getenv("PROJECT_NAME", "")
+AGENT_NAME = os.getenv("AGENT_NAME", "")
 
 # Use the PROJECT endpoint (not application endpoint) - this is what works
 # The agent is specified in the request payload, not the URL
@@ -165,12 +169,6 @@ def send_message_non_streaming(user_message: str, passenger_id: str = None) -> s
     response = client.responses.create(
         input=[{"role": "user", "content": user_message}],  # Message as list
         conversation=conversation_id,  # Conversation for context
-        extra_body=extra_body
-    )
-    
-    # Create response with agent reference and thread_id
-    response = client.responses.create(
-        input=input_messages,
         extra_body=extra_body
     )
     
