@@ -1,6 +1,6 @@
 # Travel Support Hosted Agent (LangGraph sample)
 
-This project is a modified LangGraph tutorial sample tailored to exercise Microsoft Foundry Hosted Agents. It wires multiple assistants (flights, hotels, cars, excursions) into a single graph and can be run locally or as a hosted agent.
+This project is a modified version of the LangGraph tutorial [here](https://langchain-ai.github.io/langgraph/tutorials/customer-support/customer-support/#part-4-specialized-workflows), tailored to exercise Microsoft Foundry Hosted Agents. It wires multiple assistants (flights, hotels, cars, excursions) into a single graph and can be run locally or as a hosted agent.
 
 ## Hosted Agent docs
 - Hosted agents (concepts): https://learn.microsoft.com/en-us/azure/ai-foundry/agents/concepts/hosted-agents?view=foundry&tabs=cli
@@ -47,6 +47,10 @@ The sample data uses passenger_id `3442 587242`. You can provide it in two ways:
 1) Ensure env vars in your deployment (matches `.env.example`).
 2) Use [container.py](container.py) with the LangGraph adapter (see [workflow_core.py](workflow_core.py)).
 3) Follow the Hosted Agent docs (links above) to publish in Microsoft Foundry. Once deployed, chat in the Foundry Playground.
+
+### Hosted Agent telemetry and streaming (Foundry)
+- Telemetry (traces) is automatically captured per `conversation_id` when the LangGraph is hosted as a Foundry Hosted Agent; you can inspect runs and tool activity in the Foundry UI. Example trace view: ![Tracing](images/Tracing.png)
+- The SDK client sample also demonstrates **streaming responses** with inline hints of the tool calls LangGraph is performing. Example streaming view: ![Streaming responses](images/streaming-responses.png)
 
 ## Sample conversation script (multi-agent flow)
 Use these messages in order to exercise the full flow (the sample data uses passenger_id `3442 587242`):

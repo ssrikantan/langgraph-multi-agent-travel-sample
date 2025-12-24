@@ -1,8 +1,11 @@
-# Before running the sample:
-#    pip install --pre azure-ai-projects>=2.0.0b1
-#    pip install azure-identity
-#    pip install opentelemetry-sdk opentelemetry-api
-#    pip install httpx
+# Foundry Agent HTTP Client 
+# This client connects to the LangGraph 'Hosted Agent' in Microsoft Foundry.
+# Uses the OpenAI-compatible Responses API with Azure authentication.
+# See: https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/publish-agent
+#
+# Before running:
+#    pip install openai azure-identity python-dotenv
+#    az login
 
 import uuid
 import json
