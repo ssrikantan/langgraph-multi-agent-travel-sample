@@ -42,6 +42,7 @@ The server-side code implements the LangGraph travel agent and the Azure AI Foun
 |------|---------|
 | [container.py](container.py) | Azure-hosted entrypoint; loads env, sets up observability, runs the LangGraph adapter |
 | [workflow_core.py](workflow_core.py) | Exposes `create_agent()` that wraps the graph with the Agent Framework adapter |
+| [custom_state_converter.py](custom_state_converter.py) | **Custom converter that fixes non-streaming mode** for tool-calling agents |
 | [travel_agent/app.py](travel_agent/app.py) | Core LangGraph graph with multi-agent routing, tools, state management |
 | [travel_agent/utilities.py](travel_agent/utilities.py) | Shared helper for tool fallbacks and pretty-printing |
 | [travel_agent/data/db.py](travel_agent/data/db.py) | SQLite path and date adjustment helpers |
@@ -182,13 +183,13 @@ python foundry-agent-client-sdk.py
 
 ## Streaming vs Non-Streaming (CRITICAL)
 
-### ⚠️ STREAMING IS REQUIRED FOR TOOL-CALLING AGENTS
+### ⚠️ Non-Streaming Issues with Tool-Calling Agents
 
-When the agent calls tools (which it does for most travel queries), **streaming mode is required**.
+When the agent calls tools (which it does for most travel queries), the **default adapter** has issues with non-streaming mode.
 
-### The Problem with Non-Streaming Mode
+### The Problem with Default Adapter
 
-Non-streaming requests to tool-calling agents return **sparse null arrays** that cause parse errors:
+The default `LanggraphMessageStateConverter` uses `stream_mode="updates"` for non-streaming requests, which produces intermediate step outputs. When tools are called, this results in **sparse null arrays**:
 
 ```json
 {
@@ -201,18 +202,33 @@ Non-streaming requests to tool-calling agents return **sparse null arrays** that
 }
 ```
 
-### Why This Happens
+### The Fix: RobustStateConverter
 
-The `from_langgraph` adapter (from `azure.ai.agentserver.langgraph`) doesn't properly serialize intermediate tool execution state for non-streaming responses. The adapter produces null placeholders instead of properly structured output.
+This project includes a custom state converter ([custom_state_converter.py](custom_state_converter.py)) that fixes non-streaming responses:
 
-### What Works and What Doesn't
+**Key changes:**
+1. Uses `stream_mode="values"` (final state only, not intermediate updates)
+2. Extracts only the last AI message as the response
+3. Avoids null entries from intermediate tool execution steps
 
-| Request Type | Tool Calls | Works? |
-|-------------|------------|--------|
-| Streaming (`stream=True`) | With tools | ✅ Yes |
-| Streaming (`stream=True`) | No tools | ✅ Yes |
-| Non-streaming (`stream=False`) | No tools | ✅ Yes |
-| Non-streaming (`stream=False`) | With tools | ❌ **FAILS** |
+**How it's configured** (in [workflow_core.py](workflow_core.py)):
+```python
+from custom_state_converter import RobustStateConverter
+adapter = from_langgraph(part_4_graph, state_converter=RobustStateConverter())
+```
+
+### What Works Now
+
+| Request Type | Tool Calls | Default Adapter | With RobustStateConverter |
+|-------------|------------|-----------------|---------------------------|
+| Streaming | With tools | ✅ Yes | ✅ Yes |
+| Streaming | No tools | ✅ Yes | ✅ Yes |
+| Non-streaming | No tools | ✅ Yes | ✅ Yes |
+| Non-streaming | With tools | ❌ FAILS | ✅ **FIXED** |
+
+### Teams / M365 Copilot / Bot Service Integration
+
+These channels use the **Activity Protocol** which makes non-streaming calls internally. With the `RobustStateConverter`, they should now work correctly with tool-calling agents.
 
 ### Configuration in SDK Clients
 
@@ -220,16 +236,9 @@ Both SDK clients have a `USE_STREAMING` flag for testing:
 
 ```python
 # In foundry-agent-app-sdk-client.py and foundry-agent-client-sdk.py
-USE_STREAMING = True   # ✅ REQUIRED - Always use this
-USE_STREAMING = False  # ❌ FOR TESTING ONLY - Will fail with tool calls
+USE_STREAMING = True   # Streaming works with default and custom converter
+USE_STREAMING = False  # Non-streaming now works with RobustStateConverter
 ```
-
-### Impact on Teams Integration
-
-The Microsoft Teams integration uses the **Activity Protocol** which makes non-streaming calls internally. This means:
-- Teams integration will fail with the same sparse null array error
-- There is no client-side fix for Teams
-- Requires Microsoft to fix the adapter or Teams integration layer
 
 ### Streaming Response Example
 
