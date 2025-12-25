@@ -90,21 +90,31 @@ Commands in interactive mode:
 See: https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/publish-agent
 """
 
+import os
+from dotenv import load_dotenv
 from openai import OpenAI
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 import json
 
+# Load environment variables from .env file
+load_dotenv()
+
+# Configuration from environment variables
+FOUNDRY_RESOURCE_NAME = os.getenv("FOUNDRY_RESOURCE_NAME", "")
+PROJECT_NAME = os.getenv("PROJECT_NAME", "")
+APP_NAME = os.getenv("APP_NAME", "")
+
 # Configuration - toggle streaming mode
 # WARNING: Non-streaming mode (False) WILL FAIL when agent calls tools!
 # See documentation above for details on the sparse output array bug.
-USE_STREAMING = True  # Set to False to test non-streaming mode (will fail with tool calls)
+USE_STREAMING = os.getenv("USE_STREAMING", "true").lower() == "true"
 
 # Project endpoint (base)
-PROJECT_ENDPOINT = "https://sansri-foundry-hosted-agents-pro.services.ai.azure.com/api/projects/sansri-foundry-hosted-agents-project"
+PROJECT_ENDPOINT = f"https://{FOUNDRY_RESOURCE_NAME}.services.ai.azure.com/api/projects/{PROJECT_NAME}"
 
 # Applications endpoint for the hosted agent (SDK base_url)
 # This is the PUBLISHED endpoint for production use
-APP_BASE_URL = f"{PROJECT_ENDPOINT}/applications/travel-hosted-agent/protocols/openai"
+APP_BASE_URL = f"{PROJECT_ENDPOINT}/applications/{APP_NAME}/protocols/openai"
 API_VERSION = "2025-11-15-preview"
 
 

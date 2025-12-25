@@ -7,8 +7,10 @@
 #    pip install openai azure-identity python-dotenv
 #    az login
 
+import os
 import uuid
 import json
+from dotenv import load_dotenv
 from azure.identity import DefaultAzureCredential
 from azure.ai.projects import AIProjectClient
 from opentelemetry import trace
@@ -16,8 +18,16 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor
 import httpx
 
+# Load environment variables from .env file
+load_dotenv()
+
+# Configuration from environment variables
+FOUNDRY_RESOURCE_NAME = os.getenv("FOUNDRY_RESOURCE_NAME", "")
+PROJECT_NAME = os.getenv("PROJECT_NAME", "")
+AGENT_NAME = os.getenv("AGENT_NAME", "")
+
 # Configuration
-USE_STREAMING = True  # Set to False for non-streaming behavior
+USE_STREAMING = os.getenv("USE_STREAMING", "true").lower() == "true"
 SHOW_TELEMETRY = False  # Set to True to see OpenTelemetry trace output
 
 # Global conversation ID for stateful mode
@@ -30,14 +40,15 @@ if SHOW_TELEMETRY:
     tracer_provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
 tracer = trace.get_tracer(__name__)
 
-myEndpoint = "https://sansri-foundry-hosted-agents-pro.services.ai.azure.com/api/projects/sansri-foundry-hosted-agents-project"
+# Project endpoint
+myEndpoint = f"https://{FOUNDRY_RESOURCE_NAME}.services.ai.azure.com/api/projects/{PROJECT_NAME}"
 
 project_client = AIProjectClient(
     endpoint=myEndpoint,
     credential=DefaultAzureCredential(),
 )
 
-myAgent = "travel-multi-agent"
+myAgent = AGENT_NAME
 
 
 def get_auth_token():

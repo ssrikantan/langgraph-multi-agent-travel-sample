@@ -57,17 +57,27 @@ Commands in interactive mode:
 See: https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/publish-agent
 """
 
+import os
 import json
 import httpx
+from dotenv import load_dotenv
 from azure.identity import DefaultAzureCredential
 
+# Load environment variables from .env file
+load_dotenv()
+
+# Configuration from environment variables
+FOUNDRY_RESOURCE_NAME = os.getenv("FOUNDRY_RESOURCE_NAME", "")
+PROJECT_NAME = os.getenv("PROJECT_NAME", "")
+APP_NAME = os.getenv("APP_NAME", "")
+
 # Project endpoint (for creating conversations)
-PROJECT_ENDPOINT = "https://sansri-foundry-hosted-agents-pro.services.ai.azure.com/api/projects/sansri-foundry-hosted-agents-project"
+PROJECT_ENDPOINT = f"https://{FOUNDRY_RESOURCE_NAME}.services.ai.azure.com/api/projects/{PROJECT_NAME}"
 
 # Applications endpoint for the hosted agent
 # This is the PUBLISHED endpoint for production use
 # URL pattern: {project}/applications/{app-name}/protocols/openai
-APP_ENDPOINT = f"{PROJECT_ENDPOINT}/applications/travel-hosted-agent/protocols/openai"
+APP_ENDPOINT = f"{PROJECT_ENDPOINT}/applications/{APP_NAME}/protocols/openai"
 API_VERSION = "2025-11-15-preview"
 
 
