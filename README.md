@@ -2,58 +2,245 @@
 
 This project is a modified version of the LangGraph tutorial [here](https://langchain-ai.github.io/langgraph/tutorials/customer-support/customer-support/#part-4-specialized-workflows), tailored to exercise Microsoft Foundry Hosted Agents. It wires multiple assistants (flights, hotels, cars, excursions) into a single graph and can be run locally or as a hosted agent.
 
+## Table of Contents
+
+- [Hosted Agent Documentation](#hosted-agent-docs)
+- [Prerequisites](#prerequisites)
+- [Server-Side Code](#server-side-code)
+  - [File Overview](#server-side-file-overview)
+  - [Running Locally](#running-locally)
+  - [Deploying to Foundry](#deploying-as-a-hosted-agent-foundry)
+- [Client-Side Code](#client-side-code)
+  - [Client Options Overview](#client-options-overview)
+  - [Applications Endpoint Clients (Production)](#applications-endpoint-clients-production)
+  - [Project Endpoint Clients (Development)](#project-endpoint-clients-development)
+  - [Endpoint Comparison](#endpoint-comparison)
+  - [Streaming vs Non-Streaming](#streaming-vs-non-streaming-critical)
+- [Sample Conversation Script](#sample-conversation-script-multi-agent-flow)
+- [Architecture Deep Dives](#architecture-deep-dives)
+
+---
+
 ## Hosted Agent docs
 - Hosted agents (concepts): https://learn.microsoft.com/en-us/azure/ai-foundry/agents/concepts/hosted-agents?view=foundry&tabs=cli
 - VS Code workflow for hosted agents (Python): https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/vs-code-agents-workflow-pro-code?view=foundry&tabs=windows-powershell&pivots=python
-
-## What’s included
-- Multi-agent LangGraph in [travel_agent/app.py](travel_agent/app.py) with routing, tools, and interrupt handling.
-- Azure OpenAI-backed tools for flight/hotel/car/excursion flows and a policy lookup tool.
-- Azure hosting entrypoint [container.py](container.py) and adapter wrapper [workflow_core.py](workflow_core.py).
-- Local demos: streaming CLI [clients/cli_runner.py](clients/cli_runner.py), HTTP/SSE client [clients/http_client.py](clients/http_client.py).
-- Env samples in [.env.example](.env.example).
-
-## File overview
-Packaged to run as a hosted agent in Microsoft Foundry via the LangGraph adapter.
-
-- **container.py** — Azure-hosted entrypoint; loads env, sets up observability, and runs the LangGraph adapter via create_agent().
-- **workflow_core.py** — Exposes create_agent() that wraps part_4_graph with the Agent Framework adapter; handles credential selection.
-- **travel_agent/app.py** — Core LangGraph graph (part_4_graph) with multi-agent routing, tools, state management, and checkpointing.
-- travel_agent/utilities.py — Shared helper for tool fallbacks and pretty-printing streamed events.
-- travel_agent/data/db.py — SQLite path and date adjustment helpers for seeded travel data.
-- travel_agent/tools/flight_tools.py — Flight search/update/cancel tool fns backed by SQLite.
-- travel_agent/tools/hotels_tools.py — Hotel search/book/update/cancel tool fns.
-- travel_agent/tools/car_rental_tools.py — Car rental search/book/update/cancel tool fns.
-- travel_agent/tools/excursions.py — Excursion search/book/update/cancel tool fns.
-- travel_agent/tools/policies.py — Policy lookup tool using Azure OpenAI.
-- agent-client/ — SDK clients for interacting with the Foundry-hosted agent (see folder for details).
-- test_local.py — Quick local test to verify the LangGraph works in-process.
 
 ## Prerequisites
 - Python 3.10+ and `pip install -r requirements.txt`
 - Azure OpenAI + Tavily keys (see `.env.example` for required vars)
 - For hosted runs: Managed Identity or DefaultAzureCredential access to your Azure OpenAI resource
 
-## Running locally (quick start)
-1) Copy `.env.example` to `.env` and adjust values.
-2) Run `python test_local.py` for a quick test, or use the SDK clients in `agent-client/` to interact with the hosted agent.
+---
+
+# Server-Side Code
+
+The server-side code implements the LangGraph travel agent and the Azure AI Foundry hosting adapter.
+
+## Server-Side File Overview
+
+| File | Purpose |
+|------|---------|
+| [container.py](container.py) | Azure-hosted entrypoint; loads env, sets up observability, runs the LangGraph adapter |
+| [workflow_core.py](workflow_core.py) | Exposes `create_agent()` that wraps the graph with the Agent Framework adapter |
+| [travel_agent/app.py](travel_agent/app.py) | Core LangGraph graph with multi-agent routing, tools, state management |
+| [travel_agent/utilities.py](travel_agent/utilities.py) | Shared helper for tool fallbacks and pretty-printing |
+| [travel_agent/data/db.py](travel_agent/data/db.py) | SQLite path and date adjustment helpers |
+| [travel_agent/tools/flight_tools.py](travel_agent/tools/flight_tools.py) | Flight search/update/cancel tools |
+| [travel_agent/tools/hotels_tools.py](travel_agent/tools/hotels_tools.py) | Hotel search/book/update/cancel tools |
+| [travel_agent/tools/car_rental_tools.py](travel_agent/tools/car_rental_tools.py) | Car rental search/book/update/cancel tools |
+| [travel_agent/tools/excursions.py](travel_agent/tools/excursions.py) | Excursion search/book/update/cancel tools |
+| [travel_agent/tools/policies.py](travel_agent/tools/policies.py) | Policy lookup tool using Azure OpenAI |
+| [test_local.py](test_local.py) | Quick local test to verify the graph works in-process |
+
+## Running Locally
+
+1. Copy `.env.example` to `.env` and adjust values
+2. Run `python test_local.py` for a quick in-process test
 
 ### Providing passenger_id
 The sample data uses passenger_id `3442 587242`. You can provide it in two ways:
 1. **In conversation**: Just mention it in your message (e.g., "my passenger id is 3442 587242")
 2. **Default from .env**: Set `DEFAULT_PASSENGER_ID` in your `.env` file
 
-## Deploying as a hosted agent (Foundry)
-1) Ensure env vars in your deployment (matches `.env.example`).
-2) Use [container.py](container.py) with the LangGraph adapter (see [workflow_core.py](workflow_core.py)).
-3) Follow the Hosted Agent docs (links above) to publish in Microsoft Foundry. Once deployed, chat in the Foundry Playground.
+## Deploying as a Hosted Agent (Foundry)
 
-### Hosted Agent telemetry and streaming (Foundry)
-- Telemetry (traces) is automatically captured per `conversation_id` when the LangGraph is hosted as a Foundry Hosted Agent; you can inspect runs and tool activity in the Foundry UI. Example trace view: ![Tracing](images/Tracing.png)
-- The SDK client sample also demonstrates **streaming responses** with inline hints of the tool calls LangGraph is performing. Example streaming view: ![Streaming responses](images/streaming-responses.png)
+1. Ensure env vars in your deployment (matches `.env.example`)
+2. Use [container.py](container.py) with the LangGraph adapter (see [workflow_core.py](workflow_core.py))
+3. Follow the Hosted Agent docs (links above) to publish in Microsoft Foundry
+
+### Telemetry and Tracing
+Telemetry is automatically captured per `conversation_id` when hosted as a Foundry Hosted Agent. Inspect runs and tool activity in the Foundry UI.
+
+![Tracing](images/Tracing.png)
+
+---
+
+# Client-Side Code
+
+All client code is in the `agent-client/` folder. There are **four client options** depending on your use case.
+
+## Client Options Overview
+
+| Client | Endpoint | Protocol | State Management | Use Case |
+|--------|----------|----------|-----------------|----------|
+| [foundry-agent-app-sdk-client.py](agent-client/foundry-agent-app-sdk-client.py) | Applications | OpenAI SDK | Client-side | **Production** |
+| [foundry-agent-app-http-client.py](agent-client/foundry-agent-app-http-client.py) | Applications | HTTP/REST | Client-side | **Production** |
+| [foundry-agent-client-sdk.py](agent-client/foundry-agent-client-sdk.py) | Project | OpenAI SDK | Server-side | Development |
+| [foundry-agent-http-client.py](agent-client/foundry-agent-http-client.py) | Project | HTTP/REST | Server-side | Development |
+
+---
+
+## Applications Endpoint Clients (Production)
+
+The **Applications endpoint** is the production-ready endpoint for published agents. Use these clients for customer-facing applications.
+
+### 1. OpenAI SDK Client (Recommended)
+**File:** [foundry-agent-app-sdk-client.py](agent-client/foundry-agent-app-sdk-client.py)
+
+```bash
+cd agent-client
+python foundry-agent-app-sdk-client.py
+```
+
+**Features:**
+- Uses OpenAI SDK (`openai.responses.create()`)
+- Streaming mode with real-time delta events
+- Tool call indicators displayed during execution
+- Multi-turn conversation support
+
+**URL Pattern:**
+```
+{project}/applications/{app-name}/protocols/openai/responses?api-version=...
+```
+
+### 2. HTTP/REST Client
+**File:** [foundry-agent-app-http-client.py](agent-client/foundry-agent-app-http-client.py)
+
+```bash
+cd agent-client
+python foundry-agent-app-http-client.py
+```
+
+**Features:**
+- Direct HTTP requests using `httpx`
+- SSE (Server-Sent Events) streaming
+- Manual history management in payload
+- Lower-level control for custom integrations
+
+**Key Characteristics of Applications Endpoint:**
+- **Stateless**: No server-side conversation state
+- **Client manages history**: Full conversation history sent with each request
+- **No Conversations API**: Cannot use `client.conversations.create()`
+- **Streaming required**: See [Streaming section](#streaming-vs-non-streaming-critical) below
+
+---
+
+## Project Endpoint Clients (Development)
+
+The **Project endpoint** is for development and internal use. It provides server-side state management.
+
+### 1. OpenAI SDK Client
+**File:** [foundry-agent-client-sdk.py](agent-client/foundry-agent-client-sdk.py)
+
+```bash
+cd agent-client
+python foundry-agent-client-sdk.py
+```
+
+**Features:**
+- Uses Foundry's Conversations API for server-side state
+- Automatic conversation management via `client.conversations.create()`
+- `conversation` parameter in requests for state tracking
+
+**URL Pattern:**
+```
+{project}/openai/responses?api-version=...
+```
+
+### 2. HTTP/REST Client
+**File:** [foundry-agent-http-client.py](agent-client/foundry-agent-http-client.py)
+
+**Key Characteristics of Project Endpoint:**
+- **Stateful**: Server maintains conversation state
+- **Conversations API**: Use `POST /openai/conversations` to create conversations
+- **Agent Reference**: Specify agent via `agent: {"name": "...", "type": "agent_reference"}`
+
+---
+
+## Endpoint Comparison
+
+| Feature | Applications Endpoint | Project Endpoint |
+|---------|----------------------|------------------|
+| **URL** | `{project}/applications/{app-name}/protocols/openai` | `{project}/openai` |
+| **Purpose** | Production/Published agents | Development/Internal |
+| **State** | Stateless (client manages) | Stateful (server manages) |
+| **Conversations API** | ❌ Not available | ✅ Available |
+| **Agent Specification** | In URL path (`/applications/{app-name}`) | In payload (`agent.name`) |
+| **Streaming** | Required for tool calls | Recommended |
+
+---
+
+## Streaming vs Non-Streaming (CRITICAL)
+
+### ⚠️ STREAMING IS REQUIRED FOR TOOL-CALLING AGENTS
+
+When the agent calls tools (which it does for most travel queries), **streaming mode is required**.
+
+### The Problem with Non-Streaming Mode
+
+Non-streaming requests to tool-calling agents return **sparse null arrays** that cause parse errors:
+
+```json
+{
+  "error": {
+    "code": "response_parsing_error",
+    "message": "..."
+  },
+  "output": [null, null, null, null, null, null, null],
+  "status": "failed"
+}
+```
+
+### Why This Happens
+
+The `from_langgraph` adapter (from `azure.ai.agentserver.langgraph`) doesn't properly serialize intermediate tool execution state for non-streaming responses. The adapter produces null placeholders instead of properly structured output.
+
+### What Works and What Doesn't
+
+| Request Type | Tool Calls | Works? |
+|-------------|------------|--------|
+| Streaming (`stream=True`) | With tools | ✅ Yes |
+| Streaming (`stream=True`) | No tools | ✅ Yes |
+| Non-streaming (`stream=False`) | No tools | ✅ Yes |
+| Non-streaming (`stream=False`) | With tools | ❌ **FAILS** |
+
+### Configuration in SDK Clients
+
+Both SDK clients have a `USE_STREAMING` flag for testing:
+
+```python
+# In foundry-agent-app-sdk-client.py and foundry-agent-client-sdk.py
+USE_STREAMING = True   # ✅ REQUIRED - Always use this
+USE_STREAMING = False  # ❌ FOR TESTING ONLY - Will fail with tool calls
+```
+
+### Impact on Teams Integration
+
+The Microsoft Teams integration uses the **Activity Protocol** which makes non-streaming calls internally. This means:
+- Teams integration will fail with the same sparse null array error
+- There is no client-side fix for Teams
+- Requires Microsoft to fix the adapter or Teams integration layer
+
+### Streaming Response Example
+
+![Streaming responses](images/streaming-responses.png)
+
+---
 
 ## Sample conversation script (multi-agent flow)
+
 Use these messages in order to exercise the full flow (the sample data uses passenger_id `3442 587242`):
+
 1. "Hi there, what time is my flight?"
 2. "Am i allowed to update my flight to something sooner? I want to leave later today."
 3. "Update my flight to sometime next week then"
@@ -69,12 +256,16 @@ Use these messages in order to exercise the full flow (the sample data uses pass
 13. "interesting - i like the museums, what options are there? "
 14. "OK great pick one and book it for my second day there."
 
+---
+
+# Architecture Deep Dives
+
 ## Request/Response Pipeline (Foundry → LangGraph)
 
 Understanding how config and state flow through the system:
 
 ### 1. Client Request
-Client (e.g., [foundry-agent-client-sdk.py](agent-client/foundry-agent-client-sdk.py)) sends messages to the Foundry Agent Server endpoint. The server assigns or receives a `conversation_id` to track the conversation.
+Client sends messages to the Foundry Agent Server endpoint. The server assigns or receives a `conversation_id` to track the conversation.
 
 ### 2. Container Startup
 [container.py](container.py) starts the Agent Framework server:
@@ -83,7 +274,7 @@ Client (e.g., [foundry-agent-client-sdk.py](agent-client/foundry-agent-client-sd
 - Calls `adapter.run()` to listen for incoming requests
 
 ### 3. Azure SDK Adapter (`from_langgraph`)
-When a request arrives, the `azure.ai.agentserver.langgraph.from_langgraph()` adapter (internal SDK code):
+When a request arrives, the `azure.ai.agentserver.langgraph.from_langgraph()` adapter:
 - Extracts `conversation_id` from the incoming Foundry request
 - Creates a `RunnableConfig` with `{"configurable": {"thread_id": conversation_id}}`
 - Also includes any `passenger_id` from the request in the config
@@ -91,7 +282,7 @@ When a request arrives, the `azure.ai.agentserver.langgraph.from_langgraph()` ad
 
 ### 4. LangGraph Execution
 The travel agent graph (`part_4_graph`):
-- Uses the `thread_id` from config to load checkpointed state (passenger_id, dialog_state, etc.)
+- Uses the `thread_id` from config to load checkpointed state
 - Processes the new user message
 - Tools access `passenger_id` from `config.get("configurable", {}).get("passenger_id")`
 - Updates state and saves checkpoint
@@ -107,14 +298,12 @@ The adapter:
 ### Key Points
 - **Single graph, single checkpoint** - No wrapper graph, simpler state management
 - **You don't create the config** - the `from_langgraph` adapter creates it from Foundry's `conversation_id`
-- **Thread persistence is automatic** - the `thread_id` ensures conversation state is maintained across multiple turns
+- **Thread persistence is automatic** - the `thread_id` ensures conversation state is maintained
 - **passenger_id flows through config** - Tools receive it via `config.get("configurable", {}).get("passenger_id")`
 
 ---
 
 ## Conversation State Management: Foundry ↔ LangGraph
-
-This section explains how **Foundry Hosted Agents** manage conversation state and how it maps to **LangGraph's checkpointer**.
 
 ### Architecture Overview
 
@@ -182,75 +371,6 @@ This section explains how **Foundry Hosted Agents** manage conversation state an
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### How Conversation State Flows
-
-```
-Turn 1: User says "When is my flight?"
-─────────────────────────────────────────────────────────────────────────────
-
-  Client                          Foundry                         LangGraph
-    │                               │                                │
-    │  POST /responses              │                                │
-    │  conversation=null ──────────►│                                │
-    │                               │                                │
-    │                               │  Creates conversation          │
-    │                               │  conv_abc123                   │
-    │                               │                                │
-    │                               │  config = {                    │
-    │                               │    "thread_id": "conv_abc123"  │
-    │                               │  }                             │
-    │                               │                                │
-    │                               │  graph.invoke(msg, config) ───►│
-    │                               │                                │
-    │                               │                                │ Checkpointer.get("conv_abc123")
-    │                               │                                │ → No state found (new)
-    │                               │                                │
-    │                               │                                │ Run graph nodes
-    │                               │                                │ → No passenger_id
-    │                               │                                │ → Ask user for it
-    │                               │                                │
-    │                               │                                │ Checkpointer.put("conv_abc123", state)
-    │                               │                                │ → Saves: messages, dialog_state
-    │                               │◄────────────────────────────── │
-    │◄────────────────────────────  │                                │
-    │  Response: "Please provide    │                                │
-    │   your passenger ID"          │                                │
-    │  conversation=conv_abc123     │                                │
-
-
-Turn 2: User says "passenger id is 3442 587242"
-─────────────────────────────────────────────────────────────────────────────
-
-  Client                          Foundry                         LangGraph
-    │                               │                                │
-    │  POST /responses              │                                │
-    │  conversation=conv_abc123 ───►│                                │
-    │                               │                                │
-    │                               │  config = {                    │
-    │                               │    "thread_id": "conv_abc123"  │
-    │                               │  }                             │
-    │                               │                                │
-    │                               │  graph.invoke(msg, config) ───►│
-    │                               │                                │
-    │                               │                                │ Checkpointer.get("conv_abc123")
-    │                               │                                │ → Loads previous state!
-    │                               │                                │   - Previous messages
-    │                               │                                │   - dialog_state
-    │                               │                                │
-    │                               │                                │ extract_passenger_id(messages)
-    │                               │                                │ → Finds "3442 587242"
-    │                               │                                │
-    │                               │                                │ fetch_user_flight_information()
-    │                               │                                │ → Returns flight details
-    │                               │                                │
-    │                               │                                │ Checkpointer.put("conv_abc123", state)
-    │                               │                                │ → Saves: messages, passenger_id
-    │                               │◄────────────────────────────── │
-    │◄────────────────────────────  │                                │
-    │  Response: "Your flight       │                                │
-    │   LX0112 departs at..."       │                                │
-```
-
 ### The Key Mapping: conversation_id → thread_id
 
 | Foundry Concept | LangGraph Concept | Purpose |
@@ -259,41 +379,6 @@ Turn 2: User says "passenger id is 3442 587242"
 | Foundry Conversations API | `InMemorySaver` checkpointer | Persists state across turns |
 | `client.conversations.create()` | N/A (Foundry creates it) | Initiates a new conversation |
 | Messages in conversation | `state["messages"]` | The conversation history |
-
-### What Foundry's `from_langgraph` Adapter Does
-
-The adapter (from `azure.ai.agentserver.langgraph`) is the bridge between Foundry and LangGraph:
-
-```python
-# Pseudocode of what the adapter does internally
-def handle_request(foundry_request):
-    # 1. Extract conversation_id from Foundry request
-    conversation_id = foundry_request.conversation.id  # e.g., "conv_abc123"
-    
-    # 2. Build LangGraph config with thread_id = conversation_id
-    config = {
-        "configurable": {
-            "thread_id": conversation_id,  # ◄── THE KEY MAPPING
-            "passenger_id": foundry_request.get("passenger_id"),
-        }
-    }
-    
-    # 3. Invoke the LangGraph graph
-    result = langgraph_graph.invoke(
-        {"messages": foundry_request.messages},
-        config=config  # ◄── Passes thread_id to checkpointer
-    )
-    
-    # 4. Return response to Foundry
-    return format_response(result)
-```
-
-### Why This Matters
-
-1. **You don't manage thread_id manually** when hosted on Foundry - the adapter handles it
-2. **State is automatically persisted** across conversation turns via the checkpointer
-3. **Each conversation is isolated** - different `conversation_id` = different `thread_id` = separate state
-4. **Business data (passenger_id)** flows through the same config mechanism
 
 ### Local vs Hosted Comparison
 
