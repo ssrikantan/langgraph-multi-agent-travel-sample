@@ -792,6 +792,14 @@ This is **not a bug in your agent code** - it's a limitation in how the default 
 
 ---
 
+# Development with GitHub Copilot
+
+The development and deployment of this sample—including troubleshooting the issues encountered, recommending solutions, and implementing fixes—was primarily done using **GitHub Copilot Agent Mode** with the **Claude Opus 4.5** model.
+
+This README documentation was also authored with the assistance of GitHub Copilot, demonstrating how AI-powered coding assistants can accelerate not just code development, but also technical documentation and knowledge sharing.
+
+---
+
 # Troubleshooting
 
 ## Deployment Version Routing Error
