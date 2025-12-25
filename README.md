@@ -1,15 +1,120 @@
-# Travel Support Hosted Agent (LangGraph sample)
+# Travel Support Agent: LangGraph Multi-Agent System on Microsoft Foundry
 
-This project is a modified version of the LangGraph tutorial [here](https://langchain-ai.github.io/langgraph/tutorials/customer-support/customer-support/#part-4-specialized-workflows), tailored to exercise Microsoft Foundry Hosted Agents. It wires multiple assistants (flights, hotels, cars, excursions) into a single graph and can be run locally or as a hosted agent.
+## What This Sample Demonstrates
+
+This project showcases a **multi-agent customer support system** built with [LangGraph](https://langchain-ai.github.io/langgraph/), deployed as a **Hosted Agent** on the new [Microsoft Foundry](https://learn.microsoft.com/en-us/azure/ai-foundry/) (formerly Azure AI Foundry).
+
+The travel agent is based on the popular LangGraph tutorial ["Build a Customer Support Bot"](https://langchain-ai.github.io/langgraph/tutorials/customer-support/customer-support/#part-4-specialized-workflows). It implements a sophisticated multi-agent architecture where a **primary assistant** intelligently routes customer requests to **specialized sub-agents**:
+
+| Specialist Agent | Responsibilities |
+|-----------------|------------------|
+| ✈️ **Flight Assistant** | Search flights, update tickets, cancel bookings |
+| 🏨 **Hotel Assistant** | Find hotels, make reservations, modify bookings |
+| 🚗 **Car Rental Assistant** | Search rentals, book vehicles, update reservations |
+| 🎯 **Excursions Assistant** | Find activities, book tours, manage trip recommendations |
+
+The primary assistant handles general inquiries, looks up company policies, and delegates to the appropriate specialist when users need to take action. This **supervisor pattern** ensures each agent focuses on its domain while providing a seamless conversational experience—users never know they're being handed off between agents.
+
+![Travel Agent Graph](images/graph_bot_app.png)
+
+LangGraph's **graph-based execution model** enables complex workflows with conditional routing, state management across conversation turns, and graceful escalation when specialists can't fulfill a request. The graph structure looks like this:
+
+![Multi-Agent Architecture](https://langchain-ai.github.io/langgraph/tutorials/customer-support/img/part-4-diagram.png)
+
+---
+
+## From Local Code to Enterprise Channels
+
+This sample takes the LangGraph-based travel agent and packages it for deployment to **Microsoft Foundry as a Hosted Agent**. Once deployed, the agent becomes available through the Foundry Playground for testing:
+
+![Foundry Playground](images/Playground-Agent.png)
+
+### One-Click Publishing to Enterprise Channels
+
+The real power comes from Foundry's **turnkey publishing** capability. Once your agent is published as an Application in the Foundry Playground, **no additional development effort is required** to make it available across multiple enterprise channels:
+
+- **Microsoft Teams** - Chat with your agent directly in Teams
+- **Microsoft 365 Copilot Agents** - Extend Copilot with your custom agent
+
+![Teams Channel](images/Agent-TeamsChannel.png)
+
+![M365 Copilot Agent](images/M365Copilot-Agent.png)
+
+Behind the scenes, Foundry's publishing process deploys an **Azure Bot Service** application that connects to your hosted agent's endpoint and configures access from the different channels. You focus on building the agent logic; Foundry handles the plumbing.
+
+### ⚠️ Public Preview Notice
+
+Microsoft Foundry is currently in **Public Preview**. During development of this sample, we encountered several issues that required workarounds—particularly around non-streaming mode support for channels like Teams and M365 Copilot. These issues and their solutions are documented in the [Troubleshooting](#troubleshooting) section.
+
+---
+
+## Why Host Your LangGraph Agent on Microsoft Foundry?
+
+Hosting your LangGraph agent as a **Foundry Hosted Agent** provides several enterprise-grade advantages over self-hosting or using development endpoints.
+
+### 1. Managed Container Infrastructure
+
+The Hosted Agent is packaged as a **Docker container** and runs on **Azure Container Apps** under the hood. This means you get a fully managed PaaS experience:
+
+- **Automatic scaling** based on demand
+- **High availability** without configuration
+- **Zero infrastructure management** — focus on your agent logic, not servers
+
+### 2. Secure Application Endpoint with Entra Identity
+
+When your Hosted Agent is published, it automatically receives an **Applications API endpoint** complete with its own **Microsoft Entra Identity**. This identity is managed for you and provides enterprise-grade authentication.
+
+![Agent Identity](images/AgentIdentity.png)
+
+### 3. Reduced Attack Surface for Client Applications
+
+The agent uses **Entra-authenticated users** to access the Applications endpoint. This design intentionally limits what client applications can access:
+
+| Endpoint | Access Scope | Security Posture |
+|----------|-------------|------------------|
+| **Applications Endpoint** | Single user's conversation only | ✅ Minimal surface area |
+| **Projects Endpoint** | All users' threads, vector DBs, knowledge bases, management APIs | ⚠️ Broad access |
+
+By using the Applications endpoint, client applications **cannot** gain access to:
+- Conversation threads of other users
+- Underlying vector databases
+- Knowledge base management
+- Other administrative services
+
+This separation of concerns is critical for production deployments where you want to expose only what's necessary.
+
+### 4. Current Limitations: Client-Side Conversation History
+
+> **Note:** At the time of writing, the Applications endpoint has some limitations.
+
+While the agent can internally handle conversation threads, accessing it through the Applications endpoint **does not support server-side thread management**. This means:
+
+- Client applications must **maintain the entire conversation history**
+- The full history must be **passed to the agent on each turn**
+- This differs from the Projects endpoint, which supports server-side state
+
+The [Client-Side Code](#client-side-code) section in this repository demonstrates both approaches, showing the distinction between Projects endpoint clients (with server-side state) and Applications endpoint clients (with client-side history management).
+
+### 5. Turnkey Telemetry and Tracing
+
+Observability is handled automatically by Microsoft Foundry. All agent executions, tool calls, and conversation flows are captured and viewable in the Foundry UI—no additional instrumentation required.
+
+![Tracing](images/Tracing.png)
+
+---
 
 ## Table of Contents
 
-- [Hosted Agent Documentation](#hosted-agent-docs)
-- [Prerequisites](#prerequisites)
-- [Server-Side Code](#server-side-code)
+- [What This Sample Demonstrates](#what-this-sample-demonstrates)
+- [From Local Code to Enterprise Channels](#from-local-code-to-enterprise-channels)
+- [Why Host Your LangGraph Agent on Microsoft Foundry?](#why-host-your-langgraph-agent-on-microsoft-foundry)
+- [Understanding the Code and Running Locally](#understanding-the-code-and-running-locally)
+  - [Prerequisites](#prerequisites)
+  - [Server-Side Code](#server-side-code)
   - [File Overview](#server-side-file-overview)
   - [Running Locally](#running-locally)
   - [Deploying to Foundry](#deploying-as-a-hosted-agent-foundry)
+  - [Publishing to Teams and M365 Copilot Agents](#publishing-to-teams-and-m365-copilot-agents)
 - [Client-Side Code](#client-side-code)
   - [Client Options Overview](#client-options-overview)
   - [Applications Endpoint Clients (Production)](#applications-endpoint-clients-production)
@@ -24,6 +129,8 @@ This project is a modified version of the LangGraph tutorial [here](https://lang
 
 ---
 
+# Understanding the Code and Running Locally
+
 ## Hosted Agent docs
 - Hosted agents (concepts): https://learn.microsoft.com/en-us/azure/ai-foundry/agents/concepts/hosted-agents?view=foundry&tabs=cli
 - VS Code workflow for hosted agents (Python): https://learn.microsoft.com/en-us/azure/ai-foundry/agents/how-to/vs-code-agents-workflow-pro-code?view=foundry&tabs=windows-powershell&pivots=python
@@ -35,26 +142,31 @@ This project is a modified version of the LangGraph tutorial [here](https://lang
 
 ---
 
-# Server-Side Code
+## Server-Side Code
 
 The server-side code implements the LangGraph travel agent and the Azure AI Foundry hosting adapter.
 
 ## Server-Side File Overview
 
-| File | Purpose |
-|------|---------|
-| [container.py](container.py) | Azure-hosted entrypoint; loads env, sets up observability, runs the LangGraph adapter |
-| [workflow_core.py](workflow_core.py) | Exposes `create_agent()` that wraps the graph with the Agent Framework adapter |
-| [custom_state_converter.py](custom_state_converter.py) | **Custom converter that fixes non-streaming mode** for tool-calling agents |
-| [travel_agent/app.py](travel_agent/app.py) | Core LangGraph graph with multi-agent routing, tools, state management |
-| [travel_agent/utilities.py](travel_agent/utilities.py) | Shared helper for tool fallbacks and pretty-printing |
-| [travel_agent/data/db.py](travel_agent/data/db.py) | SQLite path and date adjustment helpers |
-| [travel_agent/tools/flight_tools.py](travel_agent/tools/flight_tools.py) | Flight search/update/cancel tools |
-| [travel_agent/tools/hotels_tools.py](travel_agent/tools/hotels_tools.py) | Hotel search/book/update/cancel tools |
-| [travel_agent/tools/car_rental_tools.py](travel_agent/tools/car_rental_tools.py) | Car rental search/book/update/cancel tools |
-| [travel_agent/tools/excursions.py](travel_agent/tools/excursions.py) | Excursion search/book/update/cancel tools |
-| [travel_agent/tools/policies.py](travel_agent/tools/policies.py) | Policy lookup tool using Azure OpenAI |
-| [test_local.py](test_local.py) | Quick local test to verify the graph works in-process |
+| File | Purpose | Source |
+|------|---------|--------|
+| [container.py](container.py) | Azure-hosted entrypoint; loads env, sets up observability, runs the LangGraph adapter | 🔧 Hosted Agent packaging |
+| [workflow_core.py](workflow_core.py) | Exposes `create_agent()` that wraps the graph with the Agent Framework adapter | 🔧 Hosted Agent packaging |
+| [custom_state_converter.py](custom_state_converter.py) | **Custom converter that fixes non-streaming mode** for tool-calling agents | ⚠️ LangGraph non-streaming fix |
+| [travel_agent/app.py](travel_agent/app.py) | Core LangGraph graph with multi-agent routing, tools, state management | 📦 Original LangGraph sample |
+| [travel_agent/utilities.py](travel_agent/utilities.py) | Shared helper for tool fallbacks and pretty-printing | 📦 Original LangGraph sample |
+| [travel_agent/data/db.py](travel_agent/data/db.py) | SQLite path and date adjustment helpers | 📦 Original LangGraph sample |
+| [travel_agent/tools/flight_tools.py](travel_agent/tools/flight_tools.py) | Flight search/update/cancel tools | 📦 Original LangGraph sample |
+| [travel_agent/tools/hotels_tools.py](travel_agent/tools/hotels_tools.py) | Hotel search/book/update/cancel tools | 📦 Original LangGraph sample |
+| [travel_agent/tools/car_rental_tools.py](travel_agent/tools/car_rental_tools.py) | Car rental search/book/update/cancel tools | 📦 Original LangGraph sample |
+| [travel_agent/tools/excursions.py](travel_agent/tools/excursions.py) | Excursion search/book/update/cancel tools | 📦 Original LangGraph sample |
+| [travel_agent/tools/policies.py](travel_agent/tools/policies.py) | Policy lookup tool using Azure OpenAI | 📦 Original LangGraph sample |
+| [test_local.py](test_local.py) | Quick local test to verify the graph works in-process | 📦 Original LangGraph sample |
+
+**Legend:**
+- 🔧 **Hosted Agent packaging** — Code required to package the LangGraph agent as a Microsoft Foundry Hosted Agent
+- ⚠️ **LangGraph non-streaming fix** — Custom code specific to LangGraph agents to handle non-streaming clients (Teams, M365 Copilot, Bot Service)
+- 📦 **Original LangGraph sample** — Code from the original [LangGraph Customer Support tutorial](https://langchain-ai.github.io/langgraph/tutorials/customer-support/customer-support/)
 
 ## Running Locally
 
@@ -66,16 +178,63 @@ The sample data uses passenger_id `3442 587242`. You can provide it in two ways:
 1. **In conversation**: Just mention it in your message (e.g., "my passenger id is 3442 587242")
 2. **Default from .env**: Set `DEFAULT_PASSENGER_ID` in your `.env` file
 
+![Local Playground](images/LocalPlayground.png)
+
 ## Deploying as a Hosted Agent (Foundry)
 
 1. Ensure env vars in your deployment (matches `.env.example`)
 2. Use [container.py](container.py) with the LangGraph adapter (see [workflow_core.py](workflow_core.py))
 3. Follow the Hosted Agent docs (links above) to publish in Microsoft Foundry
 
-### Telemetry and Tracing
-Telemetry is automatically captured per `conversation_id` when hosted as a Foundry Hosted Agent. Inspect runs and tool activity in the Foundry UI.
+![Deploy Hosted Agent](images/DeployHostedAgent.png)
 
-![Tracing](images/Tracing.png)
+## Publishing to Teams and M365 Copilot Agents
+
+Once your Hosted Agent is deployed and running in Microsoft Foundry, you can publish it to enterprise channels with just a few clicks—**no additional code required**.
+
+### How It Works
+
+1. **Navigate to your Agent** in the Foundry portal
+2. **Click "Publish"** and select your target channels:
+   - **Microsoft Teams** — Users can chat with your agent directly in Teams
+   - **Microsoft 365 Copilot Agents** — Your agent becomes available as a Copilot extension
+3. **Configure permissions** and approve the app registration
+4. **Done!** Your agent is now accessible to users in their familiar productivity tools
+
+![Publish to Teams](images/PublishToTeams.png)
+
+### What Happens Behind the Scenes
+
+When you publish to Teams or M365 Copilot:
+
+- Foundry creates an **Azure Bot Service** resource that connects to your Hosted Agent endpoint
+- The Bot Service handles authentication, message routing, and channel-specific formatting
+- Your agent receives messages in a **non-streaming format** (which is why the [custom state converter](#streaming-vs-non-streaming-critical) is essential for tool-calling agents)
+- Responses are formatted appropriately for each channel's UI
+
+### Important Considerations
+
+| Aspect | Details |
+|--------|----------|
+| **Authentication** | Users authenticate via Microsoft Entra ID |
+| **Message Format** | Non-streaming (synchronous request/response) |
+| **State Management** | Client-side history (Applications endpoint) |
+| **Custom Converter** | Required for agents that use tools — see [Streaming vs Non-Streaming](#streaming-vs-non-streaming-critical) |
+
+> **Note:** If your agent uses tools (like this travel agent), ensure you've implemented the `RobustStateConverter` before publishing to Teams or M365 Copilot. Without it, tool-calling agents will fail with `response_parsing_error`.
+
+### Sideloading as a Personal App (No Admin Rights)
+
+If you don't have admin rights to publish to your organization's app store, you can **sideload the agent as a personal app** in Teams:
+
+1. In the Foundry publishing dialog, click **"Download zip"** to save the app package to your computer
+2. In Microsoft Teams, select **Apps** in the left navigation bar
+3. Click **Manage your apps** at the bottom
+4. Select **Upload an app** → **Upload a custom app**
+5. Upload the zip file and acknowledge the prompts
+6. The agent should now be accessible to you personally in Teams
+
+See the [Teams Channel screenshot](#one-click-publishing-to-enterprise-channels) in the earlier sections for what the experience looks like.
 
 ### ⚠️ Important: Publishing New Versions
 
@@ -111,6 +270,8 @@ Publish the new version with a **different application name** instead of version
 - Create a new application: `multichannel-travel-agent`
 
 This appears to be a platform limitation with version routing. Consider this when planning your deployment strategy.
+
+> **Note:** Microsoft Foundry is currently in **Public Preview**. Issues like this are expected to be resolved by the time the service reaches General Availability (GA).
 
 ---
 
@@ -171,6 +332,8 @@ python foundry-agent-app-http-client.py
 - **Client manages history**: Full conversation history sent with each request
 - **No Conversations API**: Cannot use `client.conversations.create()`
 - **Streaming required**: See [Streaming section](#streaming-vs-non-streaming-critical) below
+
+![Streaming Responses](images/streaming-responses.png)
 
 ---
 
